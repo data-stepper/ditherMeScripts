@@ -328,7 +328,9 @@ class ArrayDither(Params):
 
         sq_2 = sqrt(2)  # Aspect ratio of DIN A*
 
-        logging.debug(f"Padding image sized: {w}x{h} (wxh)")
+        logging.debug(
+            f"Padding image sized: {w}x{h} (wxh) with {self.padding:.2%} padding."
+        )
 
         if w > h:
             logging.debug("Detected landscape picture")
@@ -372,6 +374,10 @@ class ArrayDither(Params):
             constant_values=255,
         )
 
+        logging.debug(
+            f"Padded with {padW}x{padH} (wxh) padding only, size after padding: {padded.shape[1]}x{padded.shape[0]} (wxh)"
+        )
+
         return padded
 
     def __call__(self, img: np.ndarray, text: str) -> np.ndarray:
@@ -402,7 +408,7 @@ class ArrayDither(Params):
 
         unpadded = np.concatenate(rows, axis=0)
 
-        return self.padImage(unpadded)
+        return self.padImage(unpadded) if self.padding > 0.0 else unpadded
 
 
 class ImageDither(ArrayDither):
@@ -675,6 +681,16 @@ def main():
         "-q", "--quiet", help="Don't output anything", action="store_true"
     )
 
+    parser.add_argument(
+        "--padding",
+        "-p",
+        metavar="<percentage to pad the shorter edge>",
+        type=float,
+        help="Specify padding as a floating point number, is expected to be a percentage value",
+        dest="padding",
+        default=DEFAULTS["padding"] * 100,
+    )
+
     # ENDFOLD
 
     args = parser.parse_args()
@@ -743,6 +759,9 @@ def main():
             logging.info("Uppercasing all letters")
 
         truncate = args.truncate_text
+
+        assert 100.0 > args.padding >= 0.0, "Padding value was not in range (0-100%)"
+
     except AssertionError as err:
         logging.exception("Argument error occurred: " + str(err))
         exit(1)
@@ -768,6 +787,7 @@ def main():
         "minPixelRatio": pixelRatio,
         "minPixelHeight": args.minPixelHeight,
         "paperHeight": args.paperHeight,
+        "padding": args.padding / 100.0,  # percentage value given here
     }
 
     logging.debug("Dithering parameters used:")
