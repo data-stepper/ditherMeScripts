@@ -320,6 +320,60 @@ class ArrayDither(Params):
 
     # ENDFOLD
 
+    def padImage(self, unpadded: np.ndarray) -> np.ndarray:
+        """Pads a given dithered image according to the specified percentage."""
+
+        h, w = unpadded.shape
+        padH, padW = 0, 0
+
+        sq_2 = sqrt(2)  # Aspect ratio of DIN A*
+
+        logging.debug(f"Padding image sized: {w}x{h} (wxh)")
+
+        if w > h:
+            logging.debug("Detected landscape picture")
+            # Landscape mode
+            if w > sq_2 * h:
+                # panoramic
+                # pad the longer edge (w)
+                logging.debug("Padding panoramic (longer edge)")
+                padW = int(self.padding * (w / 2))
+                totalWidth = w + 2 * padW
+                totalHeight = int(totalWidth / sq_2)
+                padH = int((totalHeight - h) / 2)
+            else:
+                # pad the shorter edge (h)
+                logging.debug("Padding non-panoramic (shorter edge)")
+                padH = int(self.padding * (h / 2))
+                totalHeight = h + 2 * padH
+                totalWidth = int(sq_2 * totalHeight)
+                padW = int((totalWidth - w) / 2)
+        else:
+            logging.debug("Detected portrait picture")
+            # Portrait mode
+            if h > sq_2 * w:
+                # panoramic
+                # pad the longer edge (h)
+                logging.debug("Padding panoramic (longer edge)")
+                padH = int(self.padding * (h / 2))
+                totalHeight = h + 2 * padH
+                totalWidth = int(totalHeight / sq_2)
+                padW = int((totalWidth - w) / 2)
+            else:
+                logging.debug("Padding non-panoramic (shorter edge)")
+                padW = int(self.padding * (w / 2))
+                totalWidth = w + 2 * padW
+                totalHeight = int(totalWidth * sq_2)
+                padH = int((totalHeight - h) / 2)
+
+        padded = np.pad(
+            unpadded,
+            ((padH,) * 2, (padW,) * 2),
+            constant_values=255,
+        )
+
+        return padded
+
     def __call__(self, img: np.ndarray, text: str) -> np.ndarray:
         # The Call function should be as pure as possible.
         assert len(img.shape) == 2, "ArrayDither only supports b/w images"
@@ -348,30 +402,7 @@ class ArrayDither(Params):
 
         unpadded = np.concatenate(rows, axis=0)
 
-        # Pad the image
-        h, w = unpadded.shape
-        landscape = w > h
-        logging.debug(f"Found landscape={landscape} image orientation")
-
-        padH, padW = 0, 0
-
-        sq_2 = 1.0 / sqrt(2) if not landscape else sqrt(2)  # aspect ratio of paper
-
-        padH = int((self.padding * h) / 2.0)
-        totalHeight = 2 * padH + h
-        totalWidth = int(sq_2 * totalHeight)
-        padW = int((totalWidth - w) / 2)
-
-        logging.debug(f"Padding image with: {self.padding} h {padH} w {padW}")
-        pdb.set_trace()
-
-        padded = np.pad(
-            unpadded,
-            ((padH,) * 2, (padW,) * 2),
-            constant_values=255,
-        )
-
-        return padded
+        return self.padImage(unpadded)
 
 
 class ImageDither(ArrayDither):
