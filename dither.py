@@ -28,6 +28,16 @@ def _exchangeSuffixInPath(path: str, newSuffix: str) -> str:
     return path[:dotIndex] + newSuffix
 
 
+def _truncateOrRepeat(source: str, targetLength: int) -> str:
+    """Truncates or repeats a string to satisfy target length."""
+
+    if len(source) < targetLength:
+        numReps = int(ceil(len(source) / targetLength))
+        return (source * numReps)[:targetLength]
+    else:
+        return source[:targetLength]
+
+
 # ENDFOLD
 
 # STARTFOLD  ##### SCRIPT CONSTANTS
@@ -47,6 +57,7 @@ DEFAULTS = {
     "uppercase": False,
     "watermark": False,  # Still needs to be implemented.
     "supersamplingSize": 128,
+    "padding": 0.05,  # 5 % padding of the shorter edge per default
 }
 
 # ENDFOLD
@@ -61,6 +72,7 @@ class _Params:
     minPixelHeight: float = DEFAULTS["minPixelHeight"]
     paperHeight: float = DEFAULTS["paperHeight"]
     uppercase: bool = DEFAULTS["uppercase"]
+    padding: float = DEFAULTS["padding"]
     # bold: bool = True  # Boldness will be implemented using Supersampling
     fontName: str = DEFAULTS["fontName"]
     watermark: bool = DEFAULTS["watermark"]
@@ -334,7 +346,32 @@ class ArrayDither(Params):
             rows[-1], (0, rows[0].shape[1] - rows[-1].shape[1]), constant_values=255
         )
 
-        return np.concatenate(rows, axis=0)
+        unpadded = np.concatenate(rows, axis=0)
+
+        # Pad the image
+        h, w = unpadded.shape
+        landscape = w > h
+        logging.debug(f"Found landscape={landscape} image orientation")
+
+        padH, padW = 0, 0
+
+        sq_2 = 1.0 / sqrt(2) if not landscape else sqrt(2)  # aspect ratio of paper
+
+        padH = int((self.padding * h) / 2.0)
+        totalHeight = 2 * padH + h
+        totalWidth = int(sq_2 * totalHeight)
+        padW = int((totalWidth - w) / 2)
+
+        logging.debug(f"Padding image with: {self.padding} h {padH} w {padW}")
+        pdb.set_trace()
+
+        padded = np.pad(
+            unpadded,
+            ((padH,) * 2, (padW,) * 2),
+            constant_values=255,
+        )
+
+        return padded
 
 
 class ImageDither(ArrayDither):
@@ -554,11 +591,20 @@ def main():
         default=DEFAULTS["paperHeight"],
     )
 
+    # parser.add_argument(
+    #     "--truncate-text",
+    #     metavar="<Number of characters where to truncate text>",
+    #     type=int,
+    #     help="Whether and where to truncate the given text such that it remains readable, -1 means don't truncate",
+    #     default=-1,
+    # )
+
     parser.add_argument(
-        "--truncate-text",
-        metavar="<Number of characters where to truncate text>",
+        "--num-chars",
+        metavar="<Number of characters where to truncate or repeat text>",
+        dest="truncate_text",
         type=int,
-        help="Whether and where to truncate the given text such that it remains readable, -1 means don't truncate",
+        help="Whether and where to truncate or repeat the given text to yield a good amount of characters, -1 means don't truncate",
         default=-1,
     )
 
@@ -678,10 +724,11 @@ def main():
 
     if truncate > -1:
         logging.info(
-            f"Truncating text down to {truncate} characters, removed {(len(txt) - truncate) / len(txt): .2%}"
+            f"Trunc or Repeat text to {truncate} characters, removed {(len(txt) - truncate) / len(txt): .2%}"
         )
 
         txt = txt[:truncate]
+        txt = _truncateOrRepeat(txt, truncate)
 
     kwargs = {
         "pixelHeight": pixelHeight,
