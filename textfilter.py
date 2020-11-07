@@ -235,12 +235,24 @@ class complexRegexFilter(RegexFilter):
             newText.append(self.replacementFunc(match.group(0)))
             prevE = e
 
-        return "".join(newText)
+        # Iterate backwards over the regex matches and replace correspondingly
+        indices = [(m.span(0)) for m in re.finditer(self.regex, data)]
+
+        for s, e in indices[::-1]:
+            repl = self.replacementFunc(text[s:e])
+            text = text[:s] + repl + text[e:]
+
+        return text
 
     @classmethod
     def sentenceEnding(cls):
         f = lambda s: s[-1]
         return cls(" [!?.:]", f)
+
+    @classmethod
+    def weirdHyphenation(cls):
+        f = lambda s: s.replace("--", " ").replace("-", " ")
+        return cls(".+(-|(--)).+", f)
 
 
 # ENDFOLD
@@ -291,8 +303,9 @@ class MultiFilter(Filter):
             RegexFilter.multiSpacesLinebreaksFilter(),
             RegexFilter.shrinkBrackets(),
             RegexFilter.shrinkSentenceEnding(),
-            # complexRegexFilter.sentenceEnding(), # This filter doesn not yet work properly
-            TargetLengthFilter(1000000),
+            complexRegexFilter.weirdHyphenation(),  # This filter doesn not yet work properly
+            RegexFilter.multiSpacesLinebreaksFilter()
+            # TargetLengthFilter(1000000),
         ]
 
         inst = cls(filters)
