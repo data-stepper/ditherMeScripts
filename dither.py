@@ -195,6 +195,23 @@ class PixelHolder:
         return self.__sizedPixels[ceil(ratio)]
 
 
+class AlphabetHolder:
+    """This class holds all the single 'pixels' with correct sizes and thicknesses.
+
+    It is instantiated using a string of either a raw text or an already filtered alphabet.
+    Items of it are PixelHolders and can be accessed like a dictionary:
+
+        Example usage:
+
+            a = AlphabetHolder('some text I want to dither.', final_height=12, font_name='Menlo-Bold')
+            letter_s = a['s']
+            pix_brightest = letter_s(255)
+            # Now you have the corresponding ndarray to append to the row."""
+
+    def __init__(self, text: str, final_height: int, font_name: str):
+        pass
+
+
 # ENDFOLD
 
 # STARTFOLD ##### DITHER CLASSES
@@ -210,6 +227,7 @@ class ArrayDither(Params):
         self._alphabet = set(list(text))
 
     # STARTFOLD ##### CORE DITHERING FUNCTIONALITY
+    # ----- A big part of the dithering functionality is being refactored to the AlphabetHolder class -----
 
     def _getSquareLetterBoxForLetter(self, letter: str) -> np.ndarray:
         """Produces an ndarray of shape [100,100] with a letter inside aligned to the top left corner."""
