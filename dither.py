@@ -9,12 +9,12 @@ import logging
 import os
 import sys
 from dataclasses import dataclass
-from collections import defaultdict
+from collections import defaultdict, Counter, namedtuple
 import argparse
 import numpy as np
 from PIL import Image, ImageFont, ImageDraw
 import PIL
-from math import ceil, sqrt, floor
+from math import ceil, sqrt, floor, cos, sin, pi
 import pdb
 
 # ENDFOLD
@@ -58,9 +58,12 @@ DEFAULTS = {
     "paperHeight": 841.0,
     "uppercase": False,
     "watermark": False,  # Still needs to be implemented.
-    "supersamplingSize": 128,
+    "supersamplingSize": 512,
     "padding": 0.05,  # 5 % padding of the shorter edge per default
 }
+
+# Reduces image always to exactly this number of shades
+NUM_SHADES = 32
 
 # ENDFOLD
 
@@ -110,91 +113,131 @@ class Params(_Params):
 
 # STARTFOLD ##### PIXEL HOLDER DATASTRUCTURE
 
+# STARTFOLD ##### OLD PIXEL HOLDER
+# class PixelHolder:
+#     """Datastructure holding all different sizes for a single character.
+#     Instances are callable with a brightness level and return the correct Pixel.
+
+#     Initialized with the biggest pixel and a minimum height."""
+
+#     def __init__(self, maxPixel: np.ndarray, minHeight: int, samplingHeight: int):
+#         # For debug purposes implementing Supersampling
+
+#         self.minHeight = minHeight
+#         self.heightRange = maxPixel.shape[1] - self.minHeight
+#         self.__sizedPixels = {
+#             h: self._scaleCentered(maxPixel, h)
+#             for h in range(self.minHeight, maxPixel.shape[1])
+#         }
+
+#         self.__sizedPixels.update({maxPixel.shape[1]: maxPixel})
+#         self.shades = len(self.__sizedPixels.keys())
+
+#         # Now downsample to the specified height
+#         samplingRatio = maxPixel.shape[1]
+#         sampled = {
+#             k: self._resampleArray(v, samplingHeight / maxPixel.shape[1])
+#             for k, v in self.__sizedPixels.items()
+#         }
+
+#         self.__sizedPixels = sampled
+
+#     def __call__(self, value: int) -> np.ndarray:
+#         # Accepts pixel value as input
+
+#         ratio = 1.0 - (value / 255.0)
+#         ratio = ratio * self.heightRange + self.minHeight
+
+#         return self.__sizedPixels[ceil(ratio)]
+# ENDFOLD
+
+
+def clip(value, lower, upper):
+    return lower if value < lower else upper if value > upper else value
+
+
+# STARTFOLD ##### Array sampling
+
+
+def _resampleArray(original: np.ndarray, ratio: float) -> np.ndarray:
+    """Resamples an ndarray for a given ratio."""
+
+    assert ratio > 0, "Negative ratio doesn't make any sense: " + str(ratio)
+
+    w, h = original.shape
+    newHeight = int(h * ratio)
+    newWidth = int(w * ratio)
+    resampled = np.array(
+        Image.fromarray(original).resize(
+            (newHeight, newWidth), resample=PIL.Image.LANCZOS
+        )
+    )
+
+    return resampled
+
+
+def _scaleCentered(pixel: np.ndarray, height: int) -> np.ndarray:
+    """Scales a pixel down to a given height, leaving content centered."""
+
+    scaled = _resampleArray(pixel, height / pixel.shape[1])
+
+    padW = pixel.shape[0] - scaled.shape[0]
+    padH = pixel.shape[1] - scaled.shape[1]
+    scaled = np.pad(
+        scaled,
+        ((floor(padW / 2.0),) * 2, (floor(padH / 2.0),) * 2),
+        constant_values=255,
+    )
+
+    scaled = np.pad(
+        scaled,
+        (
+            (0, pixel.shape[0] - scaled.shape[0]),
+            (0, pixel.shape[1] - scaled.shape[1]),
+        ),
+        constant_values=255,
+    )
+
+    return scaled
+
+
+# ENDFOLD
+
 
 class PixelHolder:
-    """Datastructure holding all different sizes for a single character.
-    Instances are callable with a brightness level and return the correct Pixel.
+    """'Dummy' class that just holds some arrays and returns the correct one when called."""
 
-    Initialized with the biggest pixel and a minimum height."""
+    def __init__(self, arraysOfShades: list):
+        self.arrays = arraysOfShades[:]
+        self.numShades = len(self.arrays)
 
-    @staticmethod
-    def _resampleArray(original: np.ndarray, ratio: float) -> np.ndarray:
-        """Resamples an ndarray for a given ratio."""
+        # Resamples brightness values for number of shades
+        def samplingFunc(brightness: int) -> int:
+            return int((clip(brightness, 0.0, 255.0) / 255.0) * self.numShades)
 
-        assert ratio > 0, "Negative ratio doesn't make any sense." + str(ratio)
+        self.samplingFunc = samplingFunc
 
-        w, h = original.shape
-        newHeight = int(h * ratio)
-        newWidth = int(w * ratio)
-        resampled = np.array(
-            Image.fromarray(original).resize(
-                (newHeight, newWidth), resample=PIL.Image.LANCZOS
+    def __call__(self, brightness: int) -> np.ndarray:
+        return self.arrays[self.samplingFunc(brightness)]
+
+    def resampleWithRatio(self, ratio: float):
+        sampled = [_resampleArray(ar, ratio) for ar in self.arrays]
+
+        self.arrays = sampled
+
+
+def thicknessAndHeightForBrightness(brightness: float) -> (float, float):
+    """Calculates the normalized thickness and character height for a given normalized brightness value."""
+
+    return (
+            cos(pi * ( brightness / 2.0)),
+            cos(pi * ( brightness / 2.0)),
             )
-        )
 
-        return resampled
-
-    @staticmethod
-    def _scaleCentered(pixel: np.ndarray, height: int) -> np.ndarray:
-        """Scales a pixel down to a given height, leaving content centered."""
-
-        scaled = PixelHolder._resampleArray(pixel, height / pixel.shape[1])
-
-        # Refactored to method above
-        # w, h = pixel.shape
-        # width = int(height * (w / h))
-        # scaled = np.array(
-        #     Image.fromarray(pixel).resize((height, width), resample=PIL.Image.LANCZOS)
-        # )
-
-        padW = pixel.shape[0] - scaled.shape[0]
-        padH = pixel.shape[1] - scaled.shape[1]
-        scaled = np.pad(
-            scaled,
-            ((floor(padW / 2.0),) * 2, (floor(padH / 2.0),) * 2),
-            constant_values=255,
-        )
-
-        scaled = np.pad(
-            scaled,
-            (
-                (0, pixel.shape[0] - scaled.shape[0]),
-                (0, pixel.shape[1] - scaled.shape[1]),
-            ),
-            constant_values=255,
-        )
-
-        return scaled
-
-    def __init__(self, maxPixel: np.ndarray, minHeight: int, samplingHeight: int):
-        # For debug purposes implementing Supersampling
-
-        self.minHeight = minHeight
-        self.heightRange = maxPixel.shape[1] - self.minHeight
-        self.__sizedPixels = {
-            h: self._scaleCentered(maxPixel, h)
-            for h in range(self.minHeight, maxPixel.shape[1])
-        }
-
-        self.__sizedPixels.update({maxPixel.shape[1]: maxPixel})
-        self.shades = len(self.__sizedPixels.keys())
-
-        # Now downsample to the specified height
-        samplingRatio = maxPixel.shape[1]
-        sampled = {
-            k: self._resampleArray(v, samplingHeight / maxPixel.shape[1])
-            for k, v in self.__sizedPixels.items()
-        }
-
-        self.__sizedPixels = sampled
-
-    def __call__(self, value: int) -> np.ndarray:
-        # Accepts pixel value as input
-
-        ratio = 1.0 - (value / 255.0)
-        ratio = ratio * self.heightRange + self.minHeight
-
-        return self.__sizedPixels[ceil(ratio)]
+    return (
+        1.0 - cos(pi * (brightness - 0.25)),
+        sin(pi * (brightness - 0.25)),
+    )  # Hopefully gives a nice ellipse
 
 
 class AlphabetHolder:
@@ -205,13 +248,202 @@ class AlphabetHolder:
 
         Example usage:
 
-            a = AlphabetHolder('some text I want to dither.', final_height=12, font_name='Menlo-Bold')
+            a = AlphabetHolder('some text I want to dither.', final_height=12, absolute_height=1.6)
             letter_s = a['s']
             pix_brightest = letter_s(255)
             # Now you have the corresponding ndarray to append to the row."""
 
-    def __init__(self, text: str, final_height: int, font_name: str):
-        pass
+    # STARTFOLD ##### CORE DITHERING FUNCTIONALITY
+
+    def _generateSquareLetterBox(self, letter: str, thickness: int) -> np.ndarray:
+        """Produces an ndarray of supersamplingSize with a letter aligned to the top left corner,
+        using the specified thickness value as stroke thickness."""
+
+        img = Image.new("L", (DEFAULTS["supersamplingSize"],) * 2, 255)
+        draw = ImageDraw.Draw(img)
+        offset = int(DEFAULTS["supersamplingSize"] * 0.2)
+        draw.text(
+            (offset, offset),
+            letter,
+            (0),
+            font=self._font,
+            stroke_width=thickness,
+        )
+        draw = ImageDraw.Draw(img)
+        ar = np.array(img)
+        return ar
+
+    def _removeWhitespaceFromLetters(self):
+        """Computes bboxes for all letters with all thicknesses and removes all unnecessary whitespace.
+        Places extracted letters back into self._lettes dictionary."""
+
+        # Lazily make tuple of (SS, SS, 0, 0)
+        bbox = (*((DEFAULTS["supersamplingSize"],) * 2), 0, 0)
+
+        for c in self._alphabet:
+            t = self._letters[c]
+
+            for ar in t:
+                # Iterate over the ndarrays with varying thicknesses
+                x, y = np.where(np.logical_not(ar == 255))
+
+                if len(x) > 0:  # If we have a visible character
+                    l, t, r, b = (min(x), min(y), max(x), max(y))
+
+                    bbox = (
+                        min((l, bbox[0])),
+                        min((t, bbox[1])),
+                        max((r, bbox[2])),
+                        max((b, bbox[3])),
+                    )
+
+        l, t, r, b = bbox
+
+        logging.debug(f"Bounding box for letters computed: {l}, {t}, {r}, {b} (ltrb)")
+
+        extracted = {}
+
+        for c in self._alphabet:
+            tmp = [v[l : r + 1, t : b + 1] for v in self._letters[c]]
+
+            extracted[c] = tmp
+
+        self._letters = extracted
+
+    def _getLetterWithThickness(self, letter: str, thickness: int) -> np.ndarray:
+        """Gets the specified letter from the dictionary that already computed the thickness values."""
+
+        return self._letters[letter][thickness]
+
+    def _getSizedLetterWithThickness(
+        self, letter: str, thickness: int, size: int
+    ) -> np.ndarray:
+        """Calulates the letter 'box' for the specified thickness and size."""
+
+        t = self._getLetterWithThickness(letter, int(thickness))
+        return _scaleCentered(t, size)
+
+    # Watch out these methods are abstract and intendet to be overridden or replaced !!
+
+    def _scaleThickness(self, normalizedThickness: float):
+        raise NotImplementedError
+
+    def _scaleSize(self, normalizedSize: float):
+        raise NotImplementedError
+
+    def _getLetterBoxForNormalizedBrightness(
+        self, letter: str, brightness: float
+    ) -> np.ndarray:
+        """Computes the correctly sized and thickness adjusted letter box for the specified brightness value."""
+
+        # Compute the normalized thickness and size values
+        thickness, size = thicknessAndHeightForBrightness(1.0 - brightness)
+
+        # Now scale them accordingly
+        # At this point the scaling methods should either be overridden or implemented
+        sThickness = self._scaleThickness(self, thickness)
+        sSize = self._scaleSize(self, size)
+
+        return self._getSizedLetterWithThickness(letter, sThickness, sSize)
+
+    def _initializeLetterBoxes(self):
+        """Expects to be called after the thickness adjusted arrays have been computed.
+        Will do the actual initialization of the finally used arrays.
+
+        Returns:
+            The height of a unscaled letter box."""
+
+        tmp = {}
+
+        for k in self._letters.keys():
+            # For each letter build a pixel holder
+
+            arrays = [
+                self._getLetterBoxForNormalizedBrightness(k, ( b / NUM_SHADES ))
+                for b in range(NUM_SHADES)
+            ]
+
+            h = PixelHolder(arrays)
+            tmp[k] = h
+
+        self._letters = tmp
+
+        return arrays[0].shape[0]
+
+    def _scaleLetterBoxes(self, ratio: float):
+        """Scales all the letter boxes and assigns a default ndarray if an invalid key is given."""
+
+        for _, v in self._letters.items():
+            v.resampleWithRatio(ratio)
+
+        h, w = v.arrays[0].shape
+
+        defaultArray = np.ones((h, w), dtype=np.uint8) * 255
+
+        self.defaultArray = lambda x: defaultArray
+
+    # ENDFOLD
+
+    def __init__(
+        self,
+        text: str,
+        final_height: int,
+        absolute_height: float,
+        pixel_ratio: float,
+        font: ImageFont,
+        min_thickness: int = 0,
+        max_thickness: int = 20,
+    ):
+
+        assert (
+            DEFAULTS["supersamplingSize"] >= 512
+        ), "AlphabetHolder calibrated to work with at least 512 as Supersampling size"
+
+        self._font = font
+        self._alphabet = set(list(text))
+        self._alphabet.difference_update(set(" "))
+        self._letters = {}
+
+        for k in self._alphabet:
+            thicknesses = [
+                self._generateSquareLetterBox(k, t)
+                for t in range(min_thickness, max_thickness)
+            ]
+
+            self._letters[k] = thicknesses
+
+        self._removeWhitespaceFromLetters()
+
+        # Set the proper scaling
+
+        T_range = max_thickness - min_thickness
+
+        def scaleT(self, normalized: float) -> int:
+            return (int((1.0 - normalized ) * T_range) + min_thickness)
+
+        max_width = list(self._letters.values())[0][0].shape[1]
+        min_width = int(max_width * pixel_ratio)
+        S_range = max_width - min_width - 1
+
+        def scaleS(self, normalized: float) -> int:
+            return int((1.0 - normalized) * S_range) + min_width
+
+        self._scaleThickness = scaleT
+        self._scaleSize = scaleS
+
+        unscaledHeight = self._initializeLetterBoxes()
+
+        scalingRatio = final_height / unscaledHeight
+
+        self._scaleLetterBoxes(scalingRatio)
+
+    def __getitem__(self, value: str) -> np.ndarray:
+        # The AlphabetHolder class acts like a dictionary.
+
+        try:
+            return self._letters[value]
+        except:
+            return self.defaultArray
 
 
 # ENDFOLD
@@ -410,9 +642,17 @@ class ArrayDither(Params):
             + f"numChars = {len(text)}"
         )
 
-        self.calculateAlpabet(text)
-        self._calculateAndExtractBBoxesForAlphabet()
-        self._prepareLetterDictForSizes()
+        # Refactored to AlphabetHolder
+        # self.calculateAlpabet(text)
+        # self._calculateAndExtractBBoxesForAlphabet()
+        # self._prepareLetterDictForSizes()
+
+        # Load the font here
+        self._font = ImageFont.truetype(
+            font=self.fontName, size=int((72 / 100) * DEFAULTS["supersamplingSize"])
+        )
+
+        self._letters = AlphabetHolder(text, self.pixelHeight, 1.6, self.minPixelRatio, self._font)
 
         rows = []
         logging.info(f"Image downsampled to: {img.shape[1]}x{img.shape[0]} (WxH)")
@@ -465,7 +705,7 @@ class ImageDither(ArrayDither):
             try:
                 self._font = ImageFont.truetype(DEFAULT_FONT, fontPts)
             except:
-                logging.CRITICAL(
+                logging.critical(
                     "ERROR: Failed to load default font: "
                     + DEFAULT_FONT
                     + " aborting script now!"
@@ -847,3 +1087,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
