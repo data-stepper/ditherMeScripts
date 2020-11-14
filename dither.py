@@ -1,8 +1,6 @@
 #!/usr/local/bin/python3
 # -*- coding: utf-8 -*-
 
-# test
-
 # STARTFOLD ##### IMPORTS
 
 import logging
@@ -34,10 +32,14 @@ def _truncateOrRepeat(source: str, targetLength: int) -> str:
     """Truncates or repeats a string to satisfy target length."""
 
     if len(source) < targetLength:
-        numReps = int(ceil(len(source) / targetLength))
+        numReps = int(targetLength / ceil(len(source))) + 1
         return (source * numReps)[:targetLength]
     else:
         return source[:targetLength]
+
+
+def clip(value, lower, upper):
+    return lower if value < lower else upper if value > upper else value
 
 
 # ENDFOLD
@@ -54,11 +56,12 @@ DEFAULTS = {
     "fontsDirectory": "",  # Empty since fonts are global on macos
     "pixelRatio": 0.6,
     "pixelHeight": 28,
+    "thicknessRange": (1, 4),
     "minPixelHeight": None,
     "paperHeight": 841.0,
     "uppercase": False,
     "watermark": False,  # Still needs to be implemented.
-    "supersamplingSize": 512,
+    "supersamplingSize": 256,
     "padding": 0.05,  # 5 % padding of the shorter edge per default
 }
 
@@ -73,12 +76,12 @@ NUM_SHADES = 32
 @dataclass
 class _Params:
     pixelHeight: int = DEFAULTS["pixelHeight"]
+    thicknessRange: tuple = DEFAULTS["thicknessRange"]
     minPixelRatio: float = DEFAULTS["pixelRatio"]
     minPixelHeight: float = DEFAULTS["minPixelHeight"]
     paperHeight: float = DEFAULTS["paperHeight"]
     uppercase: bool = DEFAULTS["uppercase"]
     padding: float = DEFAULTS["padding"]
-    # bold: bool = True  # Boldness will be implemented using Supersampling
     fontName: str = DEFAULTS["fontName"]
     watermark: bool = DEFAULTS["watermark"]
 
@@ -111,8 +114,9 @@ class Params(_Params):
 
 # ENDFOLD
 
-# STARTFOLD ##### PIXEL HOLDER DATASTRUCTURE
+# STARTFOLD ##### DATASTRUCTURES
 
+# Deprecated
 # STARTFOLD ##### OLD PIXEL HOLDER
 # class PixelHolder:
 #     """Datastructure holding all different sizes for a single character.
@@ -150,11 +154,6 @@ class Params(_Params):
 
 #         return self.__sizedPixels[ceil(ratio)]
 # ENDFOLD
-
-
-def clip(value, lower, upper):
-    return lower if value < lower else upper if value > upper else value
-
 
 # STARTFOLD ##### Array sampling
 
@@ -203,6 +202,8 @@ def _scaleCentered(pixel: np.ndarray, height: int) -> np.ndarray:
 
 # ENDFOLD
 
+# STARTFOLD ##### New Pixel Holder
+
 
 class PixelHolder:
     """'Dummy' class that just holds some arrays and returns the correct one when called."""
@@ -213,7 +214,7 @@ class PixelHolder:
 
         # Resamples brightness values for number of shades
         def samplingFunc(brightness: int) -> int:
-            return int((clip(brightness, 0.0, 255.0) / 255.0) * self.numShades)
+            return int((clip(brightness, 0.0, 255.0) / 255.0) * (self.numShades - 1))
 
         self.samplingFunc = samplingFunc
 
@@ -226,18 +227,32 @@ class PixelHolder:
         self.arrays = sampled
 
 
+# ENDFOLD
+
+# STARTFOLD ##### HEART
+
+# This is the heart of the dithering algorithm:
+# The function that computes thickness and pixel height
+# values for a given normalized brightness value.
+#
+# Tune carefully <--------------------------------------------
+
+# For scaling purposes, this function always needs to map
+# both values over the entire range [0, 1]
+
+
 def thicknessAndHeightForBrightness(brightness: float) -> (float, float):
     """Calculates the normalized thickness and character height for a given normalized brightness value."""
 
     return (
-            cos(pi * ( brightness / 2.0)),
-            cos(pi * ( brightness / 2.0)),
-            )
+        cos(pi * (brightness / 2.0)),  # Thickness value
+        cos(pi * (brightness / 2.0)),  # Size value
+    )
 
-    return (
-        1.0 - cos(pi * (brightness - 0.25)),
-        sin(pi * (brightness - 0.25)),
-    )  # Hopefully gives a nice ellipse
+
+# ENDFOLD
+
+# STARTFOLD ##### AlphabetHolder
 
 
 class AlphabetHolder:
@@ -279,6 +294,7 @@ class AlphabetHolder:
 
         # Lazily make tuple of (SS, SS, 0, 0)
         bbox = (*((DEFAULTS["supersamplingSize"],) * 2), 0, 0)
+        largest_characters_area = 0
 
         for c in self._alphabet:
             t = self._letters[c]
@@ -297,9 +313,23 @@ class AlphabetHolder:
                         max((b, bbox[3])),
                     )
 
+                    area = (b - t) * (r - l)
+
+                    if (
+                        area > largest_characters_area
+                    ):  # If a character was the new 'largest'
+                        largest_character = c
+                        largest_characters_area = area
+
+                else:
+                    logging.debug(f"Found invisible character: {c} ({ord(c)}) in hex")
+
         l, t, r, b = bbox
 
         logging.debug(f"Bounding box for letters computed: {l}, {t}, {r}, {b} (ltrb)")
+        logging.debug(
+            f"Largest character found: {largest_character}, with area: {largest_characters_area} pix^2"
+        )
 
         extracted = {}
 
@@ -359,7 +389,7 @@ class AlphabetHolder:
             # For each letter build a pixel holder
 
             arrays = [
-                self._getLetterBoxForNormalizedBrightness(k, ( b / NUM_SHADES ))
+                self._getLetterBoxForNormalizedBrightness(k, (b / NUM_SHADES))
                 for b in range(NUM_SHADES)
             ]
 
@@ -389,15 +419,20 @@ class AlphabetHolder:
         text: str,
         final_height: int,
         absolute_height: float,
-        pixel_ratio: float,
         font: ImageFont,
+        min_pixel_ratio: float,
+        max_pixel_ratio: float = 1.0,
         min_thickness: int = 0,
         max_thickness: int = 20,
     ):
 
+        # assert (
+        #     DEFAULTS["supersamplingSize"] >= 512
+        # ), "AlphabetHolder calibrated to work with at least 512 as Supersampling size"
+
         assert (
-            DEFAULTS["supersamplingSize"] >= 512
-        ), "AlphabetHolder calibrated to work with at least 512 as Supersampling size"
+            max_pixel_ratio > min_pixel_ratio
+        ), "Max pixel ratio should be bigger than min_pixel_ratio"
 
         self._font = font
         self._alphabet = set(list(text))
@@ -407,7 +442,7 @@ class AlphabetHolder:
         for k in self._alphabet:
             thicknesses = [
                 self._generateSquareLetterBox(k, t)
-                for t in range(min_thickness, max_thickness)
+                for t in range(min_thickness, max_thickness + 1)
             ]
 
             self._letters[k] = thicknesses
@@ -416,14 +451,18 @@ class AlphabetHolder:
 
         # Set the proper scaling
 
-        T_range = max_thickness - min_thickness
+        T_range = max_thickness - min_thickness - 1
+
+        logging.debug(f"Thickness range: {T_range}")
 
         def scaleT(self, normalized: float) -> int:
-            return (int((1.0 - normalized ) * T_range) + min_thickness)
+            return int((1.0 - normalized) * T_range) + min_thickness
 
-        max_width = list(self._letters.values())[0][0].shape[1]
-        min_width = int(max_width * pixel_ratio)
+        max_width = int(list(self._letters.values())[0][0].shape[1] * max_pixel_ratio)
+        min_width = int(max_width * min_pixel_ratio)
         S_range = max_width - min_width - 1
+
+        logging.debug(f"Size range: {S_range}")
 
         def scaleS(self, normalized: float) -> int:
             return int((1.0 - normalized) * S_range) + min_width
@@ -437,6 +476,12 @@ class AlphabetHolder:
 
         self._scaleLetterBoxes(scalingRatio)
 
+        ltr = list(self._letters.values())[0]
+        logging.debug("Testing brightness range for arbitrary character:")
+        logging.debug(
+            f"Min: {ltr(0).mean() / 255.0} ( ltr(0) ), Max: {ltr(255).mean() / 255.0} ( ltr(255) )"
+        )
+
     def __getitem__(self, value: str) -> np.ndarray:
         # The AlphabetHolder class acts like a dictionary.
 
@@ -445,6 +490,8 @@ class AlphabetHolder:
         except:
             return self.defaultArray
 
+
+# ENDFOLD
 
 # ENDFOLD
 
@@ -649,10 +696,18 @@ class ArrayDither(Params):
 
         # Load the font here
         self._font = ImageFont.truetype(
-            font=self.fontName, size=int((72 / 100) * DEFAULTS["supersamplingSize"])
+            font=self.fontName, size=int((72 / 200) * DEFAULTS["supersamplingSize"])
         )
 
-        self._letters = AlphabetHolder(text, self.pixelHeight, 1.6, self.minPixelRatio, self._font)
+        self._letters = AlphabetHolder(
+            text,
+            self.pixelHeight,
+            1.6,
+            self._font,
+            self.minPixelRatio,
+            1.0,
+            *self.thicknessRange,
+        )
 
         rows = []
         logging.info(f"Image downsampled to: {img.shape[1]}x{img.shape[0]} (WxH)")
@@ -866,7 +921,7 @@ def main():
         if f == "A2":
             return 420.0
 
-        raise ArgumentError("Format " + f + " not valid.")
+        raise argparse.ArgumentError("Format " + f + " not valid.")
 
     paperGroup.add_argument(
         "--paper-format",
@@ -951,6 +1006,25 @@ def main():
         default=DEFAULTS["padding"] * 100,
     )
 
+    # Thickness values
+    parser.add_argument(
+        "--min-thickness",
+        dest="min_thickness",
+        metavar="<minimum thickness value>",
+        type=int,
+        help=f"Minimum thickness value for variable thickness font. (defaults to {DEFAULTS['thicknessRange'][0]}",
+        default=DEFAULTS["thicknessRange"][0],
+    )
+
+    parser.add_argument(
+        "--max-thickness",
+        dest="max_thickness",
+        metavar="<maximum thickness value>",
+        type=int,
+        help=f"Maximum thickness value for variable thickness font. (defaults to {DEFAULTS['thicknessRange'][1]}",
+        default=DEFAULTS["thicknessRange"][1],
+    )
+
     # ENDFOLD
 
     args = parser.parse_args()
@@ -1022,6 +1096,8 @@ def main():
 
         assert 100.0 > args.padding >= 0.0, "Padding value was not in range (0-100%)"
 
+        assert args.max_thickness > args.min_thickness, "Maximum thickness value must be greater than minimum."
+
     except AssertionError as err:
         logging.exception("Argument error occurred: " + str(err))
         exit(1)
@@ -1033,12 +1109,11 @@ def main():
         txt = f.read()
 
     if truncate > -1:
+        txt = _truncateOrRepeat(txt, truncate)
+
         logging.info(
             f"Trunc or Repeat text to {truncate} characters, removed {(len(txt) - truncate) / len(txt): .2%}"
         )
-
-        txt = txt[:truncate]
-        txt = _truncateOrRepeat(txt, truncate)
 
     kwargs = {
         "pixelHeight": pixelHeight,
@@ -1048,6 +1123,7 @@ def main():
         "minPixelHeight": args.minPixelHeight,
         "paperHeight": args.paperHeight,
         "padding": args.padding / 100.0,  # percentage value given here
+        "thicknessRange": (args.min_thickness, args.max_thickness),
     }
 
     logging.debug("Dithering parameters used:")
@@ -1088,3 +1164,27 @@ def main():
 if __name__ == "__main__":
     main()
 
+# STARTFOLD ##### For debugging and live testing purposes
+
+font = ImageFont.truetype(
+    font="/home/bent/.local/share/fonts/IBMPlexSans-Regular.ttf",
+    size=int((72 / 200) * DEFAULTS["supersamplingSize"]),
+)
+
+AlphabetHolder
+h = AlphabetHolder(
+    "abcdeAAP", 28, 1.6, font, 0.4, 0.9, min_thickness=1, max_thickness=4
+)
+
+stacked = []
+
+for v in range(0, 255, 10):
+    ar = h["a"](v)
+
+    stacked.append(ar)
+
+big = np.concatenate(stacked, axis=0)
+pImg = Image.fromarray(big)
+pImg.show()
+
+# ENDFOLD
