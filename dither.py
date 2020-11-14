@@ -1,10 +1,6 @@
 #!/usr/local/bin/python3
 # -*- coding: utf-8 -*-
 
-# For debugging purposes
-import matplotlib.pyplot as plt
-
-
 # STARTFOLD ##### IMPORTS
 
 import logging
@@ -20,20 +16,6 @@ from math import ceil, sqrt, floor, cos, sin, pi
 import pdb
 
 # ENDFOLD
-
-def show_stacked(arrays: list):
-    # For debugging
-    # shows many numpy arrays stacked along a dimension
-    final = []
-
-    for ar in arrays:
-        final.append(ar)
-
-    big = np.concatenate(final, axis=0)
-
-    pImg = Image.fromarray(big)
-    pImg.show()
-
 
 # STARTFOLD ##### SUPPLEMETARY FUNCTIONS
 
@@ -394,7 +376,9 @@ class AlphabetHolder:
 
         h, w = v.arrays[0].shape
 
-        self.defaultArray = np.ones((h, w), dtype=np.uint8) * 255
+        defaultArray = np.ones((h, w), dtype=np.uint8) * 255
+
+        self.defaultArray = lambda x: defaultArray
 
     # ENDFOLD
 
@@ -437,7 +421,7 @@ class AlphabetHolder:
 
         max_width = list(self._letters.values())[0][0].shape[1]
         min_width = int(max_width * pixel_ratio)
-        S_range = max_width - min_width
+        S_range = max_width - min_width - 1
 
         def scaleS(self, normalized: float) -> int:
             return int((1.0 - normalized) * S_range) + min_width
@@ -656,9 +640,17 @@ class ArrayDither(Params):
             + f"numChars = {len(text)}"
         )
 
-        self.calculateAlpabet(text)
-        self._calculateAndExtractBBoxesForAlphabet()
-        self._prepareLetterDictForSizes()
+        # Refactored to AlphabetHolder
+        # self.calculateAlpabet(text)
+        # self._calculateAndExtractBBoxesForAlphabet()
+        # self._prepareLetterDictForSizes()
+
+        # Load the font here
+        self._font = ImageFont.truetype(
+            font=self.fontName, size=int((72 / 100) * DEFAULTS["supersamplingSize"])
+        )
+
+        self._letters = AlphabetHolder(text, self.pixelHeight, 1.6, self.minPixelRatio, self._font)
 
         rows = []
         logging.info(f"Image downsampled to: {img.shape[1]}x{img.shape[0]} (WxH)")
@@ -711,7 +703,7 @@ class ImageDither(ArrayDither):
             try:
                 self._font = ImageFont.truetype(DEFAULT_FONT, fontPts)
             except:
-                logging.CRITICAL(
+                logging.critical(
                     "ERROR: Failed to load default font: "
                     + DEFAULT_FONT
                     + " aborting script now!"
@@ -1091,31 +1083,6 @@ def main():
 
 # ENDFOLD
 
-# if __name__ == "__main__":
-#     main()
-
-
-# quit()
-
-font = ImageFont.truetype(
-    font="/home/bent/.local/share/fonts/IBMPlexSans-Regular.ttf", size=int((72 / 100) * DEFAULTS["supersamplingSize"])
-)
-
-holder = AlphabetHolder("Üüsome Atext", 32, 1.6, 0.6, font, max_thickness=20)
-
-ltr = holder['A']
-
-final = []
-
-m = 16
-for b in range(m):
-    img = ltr(int(( b / m ) * 255))
-
-    final.append(img)
-    print(f"{b}: {img.mean()}")
-
-big = np.concatenate(final, axis=0)
-
-pImg = Image.fromarray(big)
-pImg.show()
+if __name__ == "__main__":
+    main()
 
