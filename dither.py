@@ -4,6 +4,7 @@
 # For debugging purposes
 import matplotlib.pyplot as plt
 
+
 # STARTFOLD ##### IMPORTS
 
 import logging
@@ -19,6 +20,20 @@ from math import ceil, sqrt, floor, cos, sin, pi
 import pdb
 
 # ENDFOLD
+
+def show_stacked(arrays: list):
+    # For debugging
+    # shows many numpy arrays stacked along a dimension
+    final = []
+
+    for ar in arrays:
+        final.append(ar)
+
+    big = np.concatenate(final, axis=0)
+
+    pImg = Image.fromarray(big)
+    pImg.show()
+
 
 # STARTFOLD ##### SUPPLEMETARY FUNCTIONS
 
@@ -231,6 +246,11 @@ def thicknessAndHeightForBrightness(brightness: float) -> (float, float):
     """Calculates the normalized thickness and character height for a given normalized brightness value."""
 
     return (
+            cos(pi * ( brightness / 2.0)),
+            cos(pi * ( brightness / 2.0)),
+            )
+
+    return (
         1.0 - cos(pi * (brightness - 0.25)),
         sin(pi * (brightness - 0.25)),
     )  # Hopefully gives a nice ellipse
@@ -296,7 +316,6 @@ class AlphabetHolder:
         l, t, r, b = bbox
 
         logging.debug(f"Bounding box for letters computed: {l}, {t}, {r}, {b} (ltrb)")
-        print(f"Bounding box for letters computed: {l}, {t}, {r}, {b} (ltrb)")
 
         extracted = {}
 
@@ -317,8 +336,8 @@ class AlphabetHolder:
     ) -> np.ndarray:
         """Calulates the letter 'box' for the specified thickness and size."""
 
-        thickness = self._getLetterWithThickness(letter, thickness)
-        return PixelHolder._scaleCentered(thickness, size)
+        t = self._getLetterWithThickness(letter, int(thickness))
+        return _scaleCentered(t, size)
 
     # Watch out these methods are abstract and intendet to be overridden or replaced !!
 
@@ -334,14 +353,12 @@ class AlphabetHolder:
         """Computes the correctly sized and thickness adjusted letter box for the specified brightness value."""
 
         # Compute the normalized thickness and size values
-        thickness, size = thicknessAndHeightForBrightness(brightness / 255.0)
+        thickness, size = thicknessAndHeightForBrightness(1.0 - brightness)
 
         # Now scale them accordingly
         # At this point the scaling methods should either be overridden or implemented
         sThickness = self._scaleThickness(self, thickness)
         sSize = self._scaleSize(self, size)
-
-        print(sThickness, sSize)
 
         return self._getSizedLetterWithThickness(letter, sThickness, sSize)
 
@@ -358,7 +375,7 @@ class AlphabetHolder:
             # For each letter build a pixel holder
 
             arrays = [
-                self._getLetterBoxForNormalizedBrightness(k, b)
+                self._getLetterBoxForNormalizedBrightness(k, ( b / NUM_SHADES ))
                 for b in range(NUM_SHADES)
             ]
 
@@ -376,7 +393,6 @@ class AlphabetHolder:
             v.resampleWithRatio(ratio)
 
         h, w = v.arrays[0].shape
-        print(w, h)
 
         self.defaultArray = np.ones((h, w), dtype=np.uint8) * 255
 
@@ -417,7 +433,7 @@ class AlphabetHolder:
         T_range = max_thickness - min_thickness
 
         def scaleT(self, normalized: float) -> int:
-            return 1.0 - (int((1.0 - normalized) * T_range) + min_thickness)
+            return (int((1.0 - normalized ) * T_range) + min_thickness)
 
         max_width = list(self._letters.values())[0][0].shape[1]
         min_width = int(max_width * pixel_ratio)
@@ -440,7 +456,7 @@ class AlphabetHolder:
 
         try:
             return self._letters[value]
-        except KeyError as e:
+        except:
             return self.defaultArray
 
 
@@ -1078,10 +1094,28 @@ def main():
 # if __name__ == "__main__":
 #     main()
 
-font = ImageFont.truetype(
-    font="Arial", size=int((72 / 100) * DEFAULTS["supersamplingSize"])
-)
-holder = AlphabetHolder("Üüsome Atext", 12, 1.6, 0.6, font, max_thickness=15)
 
-plt.imshow(holder.averages)
-plt.show()
+# quit()
+
+font = ImageFont.truetype(
+    font="/home/bent/.local/share/fonts/IBMPlexSans-Regular.ttf", size=int((72 / 100) * DEFAULTS["supersamplingSize"])
+)
+
+holder = AlphabetHolder("Üüsome Atext", 32, 1.6, 0.6, font, max_thickness=20)
+
+ltr = holder['A']
+
+final = []
+
+m = 16
+for b in range(m):
+    img = ltr(int(( b / m ) * 255))
+
+    final.append(img)
+    print(f"{b}: {img.mean()}")
+
+big = np.concatenate(final, axis=0)
+
+pImg = Image.fromarray(big)
+pImg.show()
+
