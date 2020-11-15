@@ -490,6 +490,9 @@ class AlphabetHolder:
         except:
             return self.defaultArray
 
+    def values(self):
+        return self._letters.values()
+
 
 # ENDFOLD
 
@@ -679,20 +682,8 @@ class ArrayDither(Params):
 
         return padded
 
-    def __call__(self, img: np.ndarray, text: str) -> np.ndarray:
-        # The Call function should be as pure as possible.
-        assert len(img.shape) == 2, "ArrayDither only supports b/w images"
-        self.__w, self.__h = img.shape[::-1]
-        assert (self.__w * (self.__h - 1)) <= len(text) <= (self.__w * self.__h), (
-            "ArrayDither expects img to be correctly sized: "
-            + f"w, h {self.__w, self.__h} --> nPix = {self.__w * self.__h} "
-            + f"numChars = {len(text)}"
-        )
-
-        # Refactored to AlphabetHolder
-        # self.calculateAlpabet(text)
-        # self._calculateAndExtractBBoxesForAlphabet()
-        # self._prepareLetterDictForSizes()
+    def initAlphabetHolder(self, text: str):
+        """Initializes the AlphabetHolder Datastructure."""
 
         # Load the font here
         self._font = ImageFont.truetype(
@@ -709,9 +700,27 @@ class ArrayDither(Params):
             *self.thicknessRange,
         )
 
+    def __call__(self, img: np.ndarray, text: str) -> np.ndarray:
+        # The Call function should be as pure as possible.
+        assert len(img.shape) == 2, "ArrayDither only supports b/w images"
+        self.__w, self.__h = img.shape[::-1]
+        assert (self.__w * (self.__h - 1)) <= len(text) <= (self.__w * self.__h), (
+            "ArrayDither expects img to be correctly sized: "
+            + f"w, h {self.__w, self.__h} --> nPix = {self.__w * self.__h} "
+            + f"numChars = {len(text)}"
+        )
+
+        # Refactored to AlphabetHolder
+        # self.calculateAlpabet(text)
+        # self._calculateAndExtractBBoxesForAlphabet()
+        # self._prepareLetterDictForSizes()
+
+        self.initAlphabetHolder(text)
+
         rows = []
         logging.info(f"Image downsampled to: {img.shape[1]}x{img.shape[0]} (WxH)")
         rowLength = img.shape[1]
+
         for i in range(img.shape[0] - 1):
             rows.append(
                 self._assembleRow(text[i * rowLength : (i + 1) * rowLength], img[i, :])
@@ -740,7 +749,7 @@ class ImageDither(ArrayDither):
         if self.uppercase:
             newText = text.upper()
 
-        super().calculateAlpabet(newText)
+        # super().calculateAlpabet(newText)
 
         # The font size in points
         fontPts = int((72 / 100) * DEFAULTS["supersamplingSize"])
@@ -767,9 +776,10 @@ class ImageDither(ArrayDither):
                 )
                 exit(1)
 
-        super()._calculateAndExtractBBoxesForAlphabet()
+        # super()._calculateAndExtractBBoxesForAlphabet()
+        super().initAlphabetHolder(text)
 
-        ratio = (list(self._letters.values())[0]).shape
+        ratio = (list(self._letters.values())[0](0)).shape
         ratio = ratio[0] / ratio[1]
         ratio /= float(img.height / img.width)
         logging.debug(f"Skew transformation calculated ratio: {ratio}")
