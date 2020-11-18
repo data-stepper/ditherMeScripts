@@ -42,6 +42,34 @@ def clip(value, lower, upper):
     return lower if value < lower else upper if value > upper else value
 
 
+def _cutForRatioTopLeft(image: np.ndarray, ratio: float) -> np.ndarray:
+    """Given a ratio it cuts the image to the top left corner scaling sides proportionally.
+    This function is for more efficient rendering purposes."""
+
+    assert ratio > 0.0, "Ratio must be positive! (2518)"
+
+    h, w = image.shape
+    newH = int(h * ratio)
+    newW = int(w * ratio)
+
+    return image[:newH, :newW]
+
+
+def _padEqually(image: np.ndarray, amount: float) -> np.ndarray:
+    """Pads an image with whitespace around an equal amount on all sides.
+    For rendering purposes"""
+
+    assert 0.0 < amount < 1.0, "Padding amount must be between 0 and 1!"
+
+    h, w = image.shape
+    padH = int(h * amount / 2)
+    padW = int(w * amount / 2)
+
+    padded = np.pad(image, ((padH, padH), (padW, padW)), constant_values=255)
+
+    return padded
+
+
 # ENDFOLD
 
 # STARTFOLD  ##### SCRIPT CONSTANTS
@@ -629,6 +657,7 @@ class ArrayDither(Params):
         padH, padW = 0, 0
 
         sq_2 = sqrt(2)  # Aspect ratio of DIN A*
+        # sq_2 = 1.0  # Square aspect ratio
 
         logging.debug(
             f"Padding image sized: {w}x{h} (wxh) with {self.padding:.2%} padding."
@@ -814,6 +843,14 @@ class ImageDither(ArrayDither):
 
         # Image.fromarray(ar).show()
         d = super().__call__(ar, newText[: int(nH * nW)])
+
+        # Manual post processing for rendering purposes.
+
+        # Manually pad for rendering also.
+        # d = _padEqually(d, 0.05)
+
+        # Cut the image here by 'hand' for rendering.
+        # d = _cutForRatioTopLeft(d, 1.0 / 8.0)
         return Image.fromarray(d)
 
 
@@ -1087,7 +1124,7 @@ def main():
 
         pixelHeight = args.pixel_height
         assert (
-            4 < pixelHeight < 50
+            0 < pixelHeight < 100
         ), f"Given pixelHeight: {pixelHeight} was not in range (5 to 49)"
 
         pixelRatio = args.pixel_ratio
@@ -1106,7 +1143,9 @@ def main():
 
         assert 100.0 > args.padding >= 0.0, "Padding value was not in range (0-100%)"
 
-        assert args.max_thickness > args.min_thickness, "Maximum thickness value must be greater than minimum."
+        assert (
+            args.max_thickness > args.min_thickness
+        ), "Maximum thickness value must be greater than minimum."
 
     except AssertionError as err:
         logging.exception("Argument error occurred: " + str(err))
@@ -1168,8 +1207,8 @@ def main():
 
     exit(0)  # Success should return code 0
 
+    # ENDFOLD
 
-# ENDFOLD
 
 if __name__ == "__main__":
     main()

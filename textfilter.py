@@ -21,7 +21,7 @@ import pdb
 
 _SUPPORTED_FORMATS = {"pdf", "html", "txt", "htm", "html-wikisource", "detect"}
 _ENGLISH_ALPHABET = (
-    ' QWERTZUIOPASDFGHJKLYXCVBNMqwertzuiopasdfghjklyxcvbnm,.;:/()-?!1234567890"$§%&'
+    ' QWERTZUIOPASDFGHJKLYXCVBNMqwertzuiopasdfghjklyxcvbnm,.;:/()-?!1234567890"$§%&\n\r'
 )
 
 # ENDFOLD
@@ -140,6 +140,34 @@ class alphabetFilter(Filter):
 
 # STARTFOLD ##### REGEX BASED FILTERS
 
+class SimpleReplacementFilter(Filter):
+    """Replaces characters one by one simply."""
+
+    def __init__(self, target: str, replacement: str):
+        self.target = target
+        self.replacement = replacement
+
+        self.filterName = f"Replacer {target} -> {replacement}"
+
+    def __call__(self, data: str) -> str:
+        return data.replace(self.target, self.replacement)
+
+    @staticmethod
+    def alphabetShrinker():
+        """Shrinks german alhabet to replace umlauts."""
+
+        inst = MultiFilter(
+            [
+                SimpleReplacementFilter("Ü", "Ue"),
+                SimpleReplacementFilter("Ö", "Oe"),
+                SimpleReplacementFilter("Ä", "Ae"),
+                SimpleReplacementFilter("ü", "ue"),
+                SimpleReplacementFilter("ö", "oe"),
+                SimpleReplacementFilter("ä", "ae"),
+            ]
+        )
+
+        return inst
 
 class RegexFilter(Filter):
     """Filter that replaces regex matches with given replacement string."""
@@ -160,7 +188,7 @@ class RegexFilter(Filter):
     def multiSpacesLinebreaksFilter(cls):
         """Collapses multiple Spaces and linebreaks into a single one."""
 
-        inst = cls("[\n ]+", " ")
+        inst = cls("[\n\r ]+", " ")
         inst.filterName = "multiSpacesLinebreaksFilter"
         return inst
 
@@ -303,8 +331,9 @@ class MultiFilter(Filter):
             RegexFilter.multiSpacesLinebreaksFilter(),
             RegexFilter.shrinkBrackets(),
             RegexFilter.shrinkSentenceEnding(),
-            complexRegexFilter.weirdHyphenation(),  # This filter doesn not yet work properly
-            RegexFilter.multiSpacesLinebreaksFilter()
+            # complexRegexFilter.weirdHyphenation(),  # This filter doesn not yet work properly
+            RegexFilter.multiSpacesLinebreaksFilter(),
+            SimpleReplacementFilter.alphabetShrinker()
             # TargetLengthFilter(1000000),
         ]
 
