@@ -55,6 +55,21 @@ def _cutForRatioTopLeft(image: np.ndarray, ratio: float) -> np.ndarray:
     return image[:newH, :newW]
 
 
+def _cutForRatioCenter(image: np.ndarray, ratio: float) -> np.ndarray:
+    """Given a ratio it cuts the image to the center scaling sides proportionally.
+    This function is for more efficient rendering purposes."""
+
+    assert ratio > 0.0, "Ratio must be positive! (2519)"
+
+    h, w = image.shape
+    newH = int(h * ratio / 2)
+    newW = int(w * ratio / 2)
+    cW = int(w / 2)
+    cH = int(h / 2)
+
+    return image[cH - newH : cH + newH, cW - newW : cW + newW]
+
+
 def _padEqually(image: np.ndarray, amount: float) -> np.ndarray:
     """Pads an image with whitespace around an equal amount on all sides.
     For rendering purposes"""
@@ -656,8 +671,8 @@ class ArrayDither(Params):
         h, w = unpadded.shape
         padH, padW = 0, 0
 
-        sq_2 = sqrt(2)  # Aspect ratio of DIN A*
-        # sq_2 = 1.0  # Square aspect ratio
+        # sq_2 = sqrt(2)  # Aspect ratio of DIN A*
+        sq_2 = 1.0  # Square aspect ratio
 
         logging.debug(
             f"Padding image sized: {w}x{h} (wxh) with {self.padding:.2%} padding."
@@ -851,6 +866,7 @@ class ImageDither(ArrayDither):
 
         # Cut the image here by 'hand' for rendering.
         # d = _cutForRatioTopLeft(d, 1.0 / 8.0)
+        # d = _cutForRatioCenter(d, 1.0 / 8.0)
         return Image.fromarray(d)
 
 
@@ -1155,9 +1171,11 @@ def main():
 
     # Now we can dither
     with open(args.in_text, "r") as f:
-        txt = f.read()
+        txt = f.read()  # [:-1]
 
     if truncate > -1:
+        if len(txt) < 64:
+            logging.debug(f"Using short text: '{txt}'")
         txt = _truncateOrRepeat(txt, truncate)
 
         logging.info(
