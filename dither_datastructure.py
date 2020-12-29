@@ -1,3 +1,8 @@
+"""Responsible for precomputing all the character pixels.
+
+This Module mainly builds the AlphabetHolder which stores for each character
+the corresponding ndarray sized and thickened properly for each brightness value.
+"""
 import numpy as np
 from PIL import Image, ImageFont, ImageDraw
 import PIL
@@ -92,23 +97,23 @@ class AlphabetHolder:
             pix_brightest = letter_s(255)
             # Now you have the corresponding ndarray to append to the row."""
 
-    # STARTFOLD ##### CORE DITHERING FUNCTIONALITY
-
-    def _generateSquareLetterBox(self, letter: str, thickness: int) -> np.ndarray:
+    def _generate_square_letter_box(self, letter: str, thickness: int) -> np.ndarray:
         """Produces an ndarray of supersamplingSize with a letter aligned to the top left corner,
         using the specified thickness value as stroke thickness."""
 
         img = Image.new("L", (self._supersampling_size,) * 2, 255)
         draw = ImageDraw.Draw(img)
         offset = int(self._supersampling_size * 0.2)
+        # self._font_list is still a single font only
+        # implement the multi font functionality here.
         draw.text(
-            (offset, offset), letter, (0), font=self._font, stroke_width=thickness,
+            (offset, offset), letter, (0), font=self._font_list, stroke_width=thickness,
         )
         draw = ImageDraw.Draw(img)
         ar = np.array(img)
         return ar
 
-    def _removeWhitespaceFromLetters(self):
+    def _unpad_whitespace_from_letters(self):
         """Computes bboxes for all letters with all thicknesses and removes all unnecessary whitespace.
         Places extracted letters back into self._lettes dictionary."""
 
@@ -160,17 +165,17 @@ class AlphabetHolder:
 
         self._letters = extracted
 
-    def _getLetterWithThickness(self, letter: str, thickness: int) -> np.ndarray:
+    def _get_letter_with_thickness(self, letter: str, thickness: int) -> np.ndarray:
         """Gets the specified letter from the dictionary that already computed the thickness values."""
 
         return self._letters[letter][thickness]
 
-    def _getSizedLetterWithThickness(
+    def _get_sized_letter_with_thickness(
         self, letter: str, thickness: int, size: int
     ) -> np.ndarray:
         """Calulates the letter 'box' for the specified thickness and size."""
 
-        t = self._getLetterWithThickness(letter, int(thickness))
+        t = self._get_letter_with_thickness(letter, int(thickness))
         return _scale_character_array_centered(t, size)
 
     # Watch out these methods are abstract and intendet to be overridden or replaced !!
@@ -194,7 +199,7 @@ class AlphabetHolder:
         sThickness = self._scale_thickness(self, thickness)
         sSize = self._scale_size(self, size)
 
-        return self._getSizedLetterWithThickness(letter, sThickness, sSize)
+        return self._get_sized_letter_with_thickness(letter, sThickness, sSize)
 
     def _rebuild_letter_boxes_array(self):
         """Expects to be called after the thickness adjusted arrays have been computed.
@@ -241,7 +246,7 @@ class AlphabetHolder:
         text: str,
         final_height: int,
         absolute_height: float,
-        font: ImageFont,
+        fonts: list,
         min_pixel_ratio: float,
         max_pixel_ratio: float = 1.0,
         min_thickness: int = 0,
@@ -250,15 +255,11 @@ class AlphabetHolder:
         num_shades: int = 64,
     ):
 
-        # assert (
-        #     self._supersampling_size >= 512
-        # ), "AlphabetHolder calibrated to work with at least 512 as Supersampling size"
-
         assert (
             max_pixel_ratio > min_pixel_ratio
         ), "Max pixel ratio should be bigger than min_pixel_ratio"
 
-        self._font = font
+        self._font_list = fonts
         self._alphabet = set(list(text))
         self._alphabet.difference_update(set(" "))
         self._letters = {}
@@ -267,13 +268,13 @@ class AlphabetHolder:
 
         for k in self._alphabet:
             thicknesses = [
-                self._generateSquareLetterBox(k, t)
+                self._generate_square_letter_box(k, t)
                 for t in range(min_thickness, max_thickness + 1)
             ]
 
             self._letters[k] = thicknesses
 
-        self._removeWhitespaceFromLetters()
+        self._unpad_whitespace_from_letters()
 
         # Set the proper scaling
 

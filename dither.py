@@ -15,19 +15,18 @@ import pdb
 
 # Refactored
 from dither_datastructure import AlphabetHolder
-from parameters import Params, DEFAULTS
+from parameters import (
+    Params,
+    DEFAULTS,
+    make_argument_parser,
+    check_arguments,
+    setup_dithering_parameters,
+)
+import textfilter
 
 # ENDFOLD
 
 # STARTFOLD ##### SUPPLEMETARY FUNCTIONS
-
-
-def _exchange_suffix_in_path(path: str, newSuffix: str) -> str:
-    """Exchanges the suffix in a path for a new one, newSuffix must start with a dot."""
-
-    assert "." in newSuffix, "new Suffix needs to start with a dot"
-    dotIndex = path.rfind(".")
-    return path[:dotIndex] + newSuffix
 
 
 def _truncate_or_repeat_text(source: str, targetLength: int) -> str:
@@ -268,9 +267,9 @@ class ArrayDither(Params):
         """Initializes the AlphabetHolder Datastructure."""
 
         # Load the font here
-        self._font = ImageFont.truetype(
-            font=self.fontName, size=int((72 / 200) * DEFAULTS["supersamplingSize"])
-        )
+        # self._font = ImageFont.truetype(
+        #     font=self.fontName, size=int((72 / 200) * DEFAULTS["supersamplingSize"])
+        # )
 
         self._letters = AlphabetHolder(
             text,
@@ -341,9 +340,10 @@ class ImageDither(ArrayDither):
         # Set the font now
         try:
             # Try setting the font for the given fontName
-            self._font = ImageFont.truetype(
-                f"{DEFAULTS['fontsDirectory']}{self.fontName}", fontPts
-            )
+            self._font = ImageFont.truetype(self.fontName[0], fontPts)
+
+            # self._font = [ImageFont.truetype(p) for p in self.fontName]
+
         except Exception:
             # Fall back to the default font if the given font was not found
             logging.warning(
@@ -448,191 +448,12 @@ class FileDither(ImageDither):
         )
 
 
-# ENDFOLD
-
-# STARTFOLD ##### MAIN METHOD
-
-
 def main():
     """Main function, needs arguments to be refactored..."""
 
-    parser = argparse.ArgumentParser(
-        description="Script for dithering images given a text and an image"
-    )
-
-    # STARTFOLD ##### Add all command line arguments supported.
-
-    parser.add_argument(
-        "-img",
-        "--input-image",
-        metavar="<image-input>",
-        type=str,
-        help="Path to the input image, can be one of the following formats: PNG, JPED, TIFF",
-        required=True,
-    )
-
-    parser.add_argument(
-        "-txt",
-        "--in-text",
-        metavar="<text-input>",
-        type=str,
-        help="Path to the input text file, must be a .txt file encoded with utf-8",
-        required=True,
-    )
-
-    parser.add_argument(
-        "-out",
-        "--out-filepath",
-        metavar="<output-filepath>",
-        type=str,
-        help="Path where the output file will be written to, must end with '.png', if ommitted it will simply append something to the input image path.",
-        required=False,
-    )
-
-    parser.add_argument(
-        "--pixel-height",
-        metavar="<height of character in pixels>",
-        type=int,
-        help="The height in pixels for each character, will determine final image size (varying this value can easily lead to very large images).",
-        default=DEFAULTS["pixelHeight"],
-    )
-
-    parser.add_argument(
-        "--uppercase",
-        help="Whether all letters dithered should be uppercased or not",
-        action="store_true",
-    )
-
-    parser.add_argument(
-        "--font",
-        metavar="<one or multiple names/paths to truetype fonts>",
-        dest="fontName",
-        type=str,
-        help="Either one or more names or absolute paths to truetype fonts used for dithering.",
-        default=DEFAULTS["fontName"],
-    )
-
-    paperGroup = parser.add_mutually_exclusive_group()
-
-    def paperFormatter(f: str) -> float:
-        if f == "A0":
-            return 841.0
-
-        if f == "A1":
-            return 594.67
-
-        if f == "A2":
-            return 420.0
-
-        raise argparse.ArgumentError("Format " + f + " not valid.")
-
-    paperGroup.add_argument(
-        "--paper-format",
-        dest="paperHeight",
-        type=paperFormatter,
-        default="A0",  # --------------- Fix this
-        # Paper height should be defaultable in DEFAULTS
-        # not setting a default value for paper format (like here)
-        # results in paperHeight being None
-        help="You can specify this instead of '--paper-height' when using one of the supported formats.",
-    )
-
-    paperGroup.add_argument(
-        "--paper-height",
-        type=float,
-        metavar="<paper height in mm>",
-        dest="paperHeight",
-        help="The height of the paper given in millimeters, relevant for calculting final character height or when using '--min-pixel-height' to specify the pixel ratio",
-        default=DEFAULTS["paperHeight"],
-    )
-
-    # parser.add_argument(
-    #     "--truncate-text",
-    #     metavar="<Number of characters where to truncate text>",
-    #     type=int,
-    #     help="Whether and where to truncate the given text such that it remains readable, -1 means don't truncate",
-    #     default=-1,
-    # )
-
-    parser.add_argument(
-        "--num-chars",
-        metavar="<Number of characters where to truncate or repeat text>",
-        dest="truncate_text",
-        type=int,
-        help="Whether and where to truncate or repeat the given text to yield a good amount of characters, -1 means don't truncate",
-        default=-1,
-    )
-
-    pixelGroup = parser.add_mutually_exclusive_group()
-
-    pixelGroup.add_argument(
-        "--pixel-ratio",
-        metavar="<ratio smallest pixel height to largest>",
-        type=float,
-        help=f"A float between 0 and 1. The smallert this ratio is the more shades (and quality) the final image will have, but beware that it has an impact to the absolute size of the characters in the final image, possibly yielding unreadable parts of the image (where the original image was very bright). (defaults to {DEFAULTS['pixelRatio']})",
-        default=DEFAULTS["pixelRatio"],
-    )
-
-    pixelGroup.add_argument(
-        "--min-pixel-height",
-        dest="minPixelHeight",
-        metavar="<height in mm of smallest pixel>",
-        type=float,
-        help="The final height in millimeters for the smallest pixel's height in the dithered image",
-        default=DEFAULTS["minPixelHeight"],
-    )
-
-    # Parse logging stuff
-
-    parser.add_argument(
-        "--logfile",
-        metavar="<path to logfile>",
-        type=str,
-        help="The path to the logfile (defaults to stdout)",
-        default="stdout",
-    )
-
-    # Define different loglevels
-    mgroup = parser.add_mutually_exclusive_group()
-    mgroup.add_argument("-v", "--verbose", help="Verbose logging", action="store_true")
-    mgroup.add_argument(
-        "-q", "--quiet", help="Don't output anything", action="store_true"
-    )
-
-    parser.add_argument(
-        "--padding",
-        "-p",
-        metavar="<percentage to pad the shorter edge>",
-        type=float,
-        help="Specify padding as a floating point number, is expected to be a percentage value",
-        dest="padding",
-        default=DEFAULTS["padding"] * 100,
-    )
-
-    # Thickness values
-    parser.add_argument(
-        "--min-thickness",
-        dest="min_thickness",
-        metavar="<minimum thickness value>",
-        type=int,
-        help=f"Minimum thickness value for variable thickness font. (defaults to {DEFAULTS['thicknessRange'][0]}",
-        default=DEFAULTS["thicknessRange"][0],
-    )
-
-    parser.add_argument(
-        "--max-thickness",
-        dest="max_thickness",
-        metavar="<maximum thickness value>",
-        type=int,
-        help=f"Maximum thickness value for variable thickness font. (defaults to {DEFAULTS['thicknessRange'][1]}",
-        default=DEFAULTS["thicknessRange"][1],
-    )
-
-    # ENDFOLD
+    parser = make_argument_parser()
 
     args = parser.parse_args()
-
-    # STARTFOLD ##### Setup logging
 
     loglevel = logging.WARNING
 
@@ -651,87 +472,30 @@ def main():
     # And log the actual script call
     logging.debug("dither.py script called with: " + str(sys.argv))
 
-    # ENDFOLD
-
-    # STARTFOLD ##### Check parsed arguments for given preconditions
-
     try:
-        assert args.in_text.endswith(
-            ".txt"
-        ), f'The given text input path: "{args.in_text}" doesn\'t end with .txt'
-
-        imgPath = args.input_image
-        outPath = args.out_filepath
-
-        assert (
-            imgPath.endswith(".jpg")
-            or imgPath.endswith(".png")
-            or imgPath.endswith(".jpeg")
-            or imgPath.endswith(".tiff")
-        ), f'Invalid filepath for image given, only supports .jpg, .png, .jpeg, .tiff path given: "{imgPath}"'
-
-        if outPath:
-            if not outPath.endswith(".png"):
-                logging.info("Appending .png to the output path as it was not given")
-                outPath += ".png"
-        else:
-            outPath = _exchange_suffix_in_path(imgPath, "_dithered.png")
-            logging.info(f"No output path given, saving to {outPath}")
-
-        pixelHeight = args.pixel_height
-        assert (
-            0 < pixelHeight < 100
-        ), f"Given pixelHeight: {pixelHeight} was not in range (5 to 49)"
-
-        pixelRatio = args.pixel_ratio
-        assert (
-            0.0 < pixelRatio < 1.0
-        ), f"Pixel ratio must strictly be between 0 and 1: {pixelRatio} was given!"
-
-        uppercase = args.uppercase  # Well with a bool there can't be too much wrong
-
-        assert args.paperHeight > 0.0, "Negative paperHeight not allowed!"
-
-        if uppercase:
-            logging.info("Uppercasing all letters")
-
-        truncate = args.truncate_text
-
-        assert 100.0 > args.padding >= 0.0, "Padding value was not in range (0-100%)"
-
-        assert (
-            args.max_thickness > args.min_thickness
-        ), "Maximum thickness value must be greater than minimum."
-
+        check_arguments(args)
     except AssertionError as err:
         logging.exception("Argument error occurred: " + str(err))
         exit(1)
-
-    # ENDFOLD
 
     # Now we can dither
     with open(args.in_text, "r") as f:
         txt = f.read()  # [:-1]
 
-    if truncate > -1:
+    logging.info("Filtering text using standardTextFilter")
+    text_multi_filter = textfilter.MultiFilter.standardTextFilter()
+    txt = text_multi_filter(txt)
+
+    if args.truncate_text > -1:
         if len(txt) < 64:
             logging.debug(f"Using short text: '{txt}'")
-        txt = _truncate_or_repeat_text(txt, truncate)
+        txt = _truncate_or_repeat_text(txt, args.truncate_text)
 
         logging.info(
-            f"Trunc or Repeat text to {truncate} characters, removed {(len(txt) - truncate) / len(txt): .2%}"
+            f"Trunc or Repeat text to {args.truncate_text} characters, removed {(len(txt) - args.truncate_text) / len(txt): .2%}"
         )
 
-    kwargs = {
-        "pixelHeight": pixelHeight,
-        "uppercase": uppercase,
-        "fontName": args.fontName,
-        "minPixelRatio": pixelRatio,
-        "minPixelHeight": args.minPixelHeight,
-        "paperHeight": args.paperHeight,
-        "padding": args.padding / 100.0,  # percentage value given here
-        "thicknessRange": (args.min_thickness, args.max_thickness),
-    }
+    kwargs = setup_dithering_parameters(args)
 
     logging.debug("Dithering parameters used:")
 
@@ -740,16 +504,9 @@ def main():
 
     p = FileDither(**kwargs)
 
-    # p = FileDither(
-    #     pixelHeight=pixelHeight,
-    #     uppercase=uppercase,
-    #     fontName=args.fontName,
-    #     minPixelRatio=pixelRatio,
-    # )
-
     logging.info(
         "dithering "
-        + imgPath
+        + args.input_image
         + " using text: "
         + args.in_text
         + " (with "
@@ -758,40 +515,13 @@ def main():
     )
 
     try:
-        p(imgPath, outPath, txt)
+        p(args.input_image, args.out_filepath, txt)
     except Exception as e:
         logging.exception(f"Uncaught error occurred during dithering: {e}")
         exit(1)
 
     exit(0)  # Success should return code 0
 
-    # ENDFOLD
-
 
 if __name__ == "__main__":
     main()
-
-# STARTFOLD ##### For debugging and live testing purposes
-
-font = ImageFont.truetype(
-    font="/home/bent/.local/share/fonts/IBMPlexSans-Regular.ttf",
-    size=int((72 / 200) * DEFAULTS["supersamplingSize"]),
-)
-
-AlphabetHolder
-h = AlphabetHolder(
-    "abcdeAAP", 28, 1.6, font, 0.4, 0.9, min_thickness=1, max_thickness=4
-)
-
-stacked = []
-
-for v in range(0, 255, 10):
-    ar = h["a"](v)
-
-    stacked.append(ar)
-
-big = np.concatenate(stacked, axis=0)
-pImg = Image.fromarray(big)
-pImg.show()
-
-# ENDFOLD
