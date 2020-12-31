@@ -8,6 +8,7 @@ from PIL import Image, ImageFont, ImageDraw
 import PIL
 import logging
 from math import cos, pi, floor
+import pdb
 
 
 def clip(value, lower, upper):
@@ -31,12 +32,15 @@ def _resample_array_with_ratio(original: np.ndarray, ratio: float) -> np.ndarray
     return resampled
 
 
+# The 'Heart' function of the algorithm
+
+
 def thickness_and_height_for_brightness_function(brightness: float) -> (float, float):
     """Calculates the normalized thickness and character height for a given normalized brightness value."""
 
     return (
         cos(pi * (brightness / 2.0)),  # Thickness value
-        cos(pi * (brightness / 2.0)),  # Size value
+        cos(pi * ((brightness ** 0.3) / 2.0)),  # Size value
     )
 
 
@@ -55,7 +59,10 @@ def _scale_character_array_centered(pixel: np.ndarray, height: int) -> np.ndarra
 
     scaled = np.pad(
         scaled,
-        ((0, pixel.shape[0] - scaled.shape[0]), (0, pixel.shape[1] - scaled.shape[1]),),
+        (
+            (0, pixel.shape[0] - scaled.shape[0]),
+            (0, pixel.shape[1] - scaled.shape[1]),
+        ),
         constant_values=255,
     )
 
@@ -107,8 +114,13 @@ class AlphabetHolder:
         # self._font_list is still a single font only
         # implement the multi font functionality here.
         draw.text(
-            (offset, offset), letter, (0), font=self._font_list, stroke_width=thickness,
+            (offset, offset),
+            letter,
+            (0),
+            font=self._font,
+            stroke_width=thickness,
         )
+
         draw = ImageDraw.Draw(img)
         ar = np.array(img)
         return ar
@@ -239,53 +251,98 @@ class AlphabetHolder:
 
         self.defaultArray = lambda x: defaultArray
 
-    # ENDFOLD
+    def _letter_box_for_thickness_value(self, letter: str, thickness: int):
+        """Generate letter box for thickness value in range (100 - 700) width axes in variable font."""
+        self._font.set_variation_by_axes([thickness])
+        return self._generate_square_letter_box(letter, 1)
+
+    def _generate_single_thickness_list_for_letter(self, letter: str):
+        t_list = [
+            self._letter_box_for_thickness_value(
+                letter, self.variable_font_scaling_function(t)
+            )
+            # for t in range(self.min_thickness, self.max_thickness)
+            for t in range(self._num_weight_steps_variable_font)
+        ]
+
+        self._font.set_variation_by_axes([self._varfont_maximum_weight])
+        for t in range(self.max_thickness):
+            extra_thickened = self._generate_square_letter_box(letter, t)
+            t_list.append(extra_thickened)
+
+        return t_list
+
+    def _generate_letters_dictionary(self):
+        """Generate the self._letters dictionary containing a list of all thicknesses."""
+        for k in self._alphabet:
+            thicknesses = self._generate_single_thickness_list_for_letter(k)
+
+            self._letters[k] = thicknesses
+
+    def variable_font_scaling_function(self, step: int) -> int:
+        raise NotImplementedError()
+
+    def _infer_variable_font_range(self):
+        axes_data = self._font.get_variation_axes()[0]
+        assert (
+            axes_data["name"] == b"Weight"
+        ), "Too many axes for variable font, only works with one!"
+
+        minimum = axes_data["minimum"]
+        maximum = axes_data["maximum"]
+        self._varfont_maximum_weight = maximum
+        span = maximum - minimum
+        scaled_span = int((1.0 - self._min_weight_variable_font_percent) * span)
+        shifted_min = maximum - scaled_span
+
+        def variable_font_scaling_function(step: int) -> int:
+            normalized = (step - 1) / self._num_weight_steps_variable_font
+            val = normalized * scaled_span + shifted_min
+            return clip(val, shifted_min, maximum)
+
+        self.variable_font_scaling_function = variable_font_scaling_function
 
     def __init__(
         self,
         text: str,
-        final_height: int,
-        absolute_height: float,
-        fonts: list,
-        min_pixel_ratio: float,
-        max_pixel_ratio: float = 1.0,
-        min_thickness: int = 0,
-        max_thickness: int = 20,
-        supersampling_size: int = 256,
-        num_shades: int = 64,
+        font: PIL.ImageFont,
+        final_height: int = 28,
+        min_pixel_ratio: float = 0.6,
+        max_thickness: int = 8,
+        supersampling_size: int = 512,
+        num_shades: int = 128,
+        min_weight_variable_font_percent: float = 0.3,
+        num_weight_steps_variable_font: int = 32,
     ):
 
-        assert (
-            max_pixel_ratio > min_pixel_ratio
-        ), "Max pixel ratio should be bigger than min_pixel_ratio"
-
-        self._font_list = fonts
+        self._font = font
         self._alphabet = set(list(text))
         self._alphabet.difference_update(set(" "))
         self._letters = {}
         self._supersampling_size = supersampling_size
         self._num_shades = num_shades
+        self._min_weight_variable_font_percent = min_weight_variable_font_percent
+        self._num_weight_steps_variable_font = num_weight_steps_variable_font
 
-        for k in self._alphabet:
-            thicknesses = [
-                self._generate_square_letter_box(k, t)
-                for t in range(min_thickness, max_thickness + 1)
-            ]
+        self._infer_variable_font_range()
 
-            self._letters[k] = thicknesses
+        self.max_thickness = max_thickness
+
+        # Generate one letter box for each thickness level
+        self._generate_letters_dictionary()
 
         self._unpad_whitespace_from_letters()
 
         # Set the proper scaling
 
-        T_range = max_thickness - min_thickness - 1
+        T_range = max_thickness - 1 + self._num_weight_steps_variable_font
 
         logging.debug(f"Thickness range: {T_range}")
 
         def scaleT(self, normalized: float) -> int:
-            return int((1.0 - normalized) * T_range) + min_thickness
+            return int((1.0 - normalized) * T_range)
 
-        max_width = int(list(self._letters.values())[0][0].shape[1] * max_pixel_ratio)
+        max_width = int(list(self._letters.values())[0][0].shape[1])
         min_width = int(max_width * min_pixel_ratio)
         S_range = max_width - min_width - 1
 

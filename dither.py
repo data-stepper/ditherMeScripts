@@ -1,17 +1,17 @@
 #!/usr/local/bin/python3
 # -*- coding: utf-8 -*-
 
-# STARTFOLD ##### IMPORTS
-
 import logging
 import sys
 from collections import defaultdict
 import argparse
 import numpy as np
-from PIL import Image, ImageFont, ImageDraw
+from PIL import Image, ImageFont, ImageDraw, ImageOps
 import PIL
 from math import ceil, sqrt, floor, cos, sin, pi
 import pdb
+import os
+import cv2
 
 # Refactored
 from dither_datastructure import AlphabetHolder
@@ -22,11 +22,6 @@ from parameters import (
     check_arguments,
     setup_dithering_parameters,
 )
-import textfilter
-
-# ENDFOLD
-
-# STARTFOLD ##### SUPPLEMETARY FUNCTIONS
 
 
 def _truncate_or_repeat_text(source: str, targetLength: int) -> str:
@@ -69,22 +64,6 @@ def _render_function_cut_with_ratio_centered(
     cH = int(h / 2)
 
     return image[cH - newH : cH + newH, cW - newW : cW + newW]
-
-
-# ENDFOLD
-
-# STARTFOLD  ##### SCRIPT CONSTANTS
-
-# The default font which  to fall back if an exception occurs.
-# Make sure that this font (path) is always accessible.
-
-# ENDFOLD
-
-# STARTFOLD ##### DITHER PARAMETERS
-
-# ENDFOLD
-
-# STARTFOLD ##### DITHER CLASSES
 
 
 class ArrayDither(Params):
@@ -180,7 +159,13 @@ class ArrayDither(Params):
         shape = list(d.values())[0](255).shape[:]
 
         ddict = defaultdict(
-            lambda: (lambda x: np.full(shape=shape, fill_value=255, dtype=np.uint8,))
+            lambda: (
+                lambda x: np.full(
+                    shape=shape,
+                    fill_value=255,
+                    dtype=np.uint8,
+                )
+            )
         )
 
         ddict.update(d)
@@ -212,8 +197,7 @@ class ArrayDither(Params):
         h, w = unpadded.shape
         padH, padW = 0, 0
 
-        # sq_2 = sqrt(2)  # Aspect ratio of DIN A*
-        sq_2 = 1.0  # Square aspect ratio
+        sq_2 = self.final_aspect_ratio
 
         logging.debug(
             f"Padding image sized: {w}x{h} (wxh) with {self.padding:.2%} padding."
@@ -255,7 +239,11 @@ class ArrayDither(Params):
                 totalHeight = int(totalWidth * sq_2)
                 padH = int((totalHeight - h) / 2)
 
-        padded = np.pad(unpadded, ((padH,) * 2, (padW,) * 2), constant_values=255,)
+        padded = np.pad(
+            unpadded,
+            ((padH,) * 2, (padW,) * 2),
+            constant_values=255,
+        )
 
         logging.debug(
             f"Padded with {padW}x{padH} (wxh) padding only, size after padding: {padded.shape[1]}x{padded.shape[0]} (wxh)"
@@ -273,12 +261,10 @@ class ArrayDither(Params):
 
         self._letters = AlphabetHolder(
             text,
-            self.pixelHeight,
-            1.6,
             self._font,
+            self.pixelHeight,
             self.minPixelRatio,
-            1.0,
-            *self.thicknessRange,
+            self.thicknessRange[1],
         )
 
     def __call__(self, img: np.ndarray, text: str) -> np.ndarray:
@@ -318,6 +304,38 @@ class ArrayDither(Params):
         return self.padImage(unpadded) if self.padding > 0.0 else unpadded
 
 
+class ImagePreprocessing:
+    """This class handles all image preprocessing.
+
+    It expects to be given a numpy array (2 dimensional) and returns one of the same
+    shape but processed according to the parameters defined here."""
+
+    def __init__(
+        self,
+        globally_equalize_histogram: bool = False,
+        local_equalization_tile_size_percent: float = 0.03,
+    ):
+        self.globally_equalize_histogram = globally_equalize_histogram
+        self.local_equalization_tile_size_percent = local_equalization_tile_size_percent
+
+    def __call__(self, image: PIL.Image):
+        ar = np.array(image)
+
+        square_width = sqrt(ar.shape[0] * ar.shape[1])
+        tile_size = square_width * self.local_equalization_tile_size_percent
+        tile_size = int(tile_size)
+
+        logging.info("CLAHE algorithm uses {} tile size in pixels".format(tile_size))
+
+        clahe = cv2.createCLAHE(tileGridSize=(tile_size, tile_size))
+
+        ar = clahe.apply(ar)
+
+        if self.globally_equalize_histogram:
+            ar = cv2.equalizeHist(ar)
+        return ar
+
+
 class ImageDither(ArrayDither):
     """Abstraction of ArrayDither, but implements all dithering relevant functionality.
     When called via given text, and a PIL.Image it produces another PIL.Image
@@ -326,7 +344,9 @@ class ImageDither(ArrayDither):
     Note that this class is tightly coupled with ArrayDither, since it implements
     all the resizing functionality such that ArrayDither doesn't need to use PIL."""
 
-    def __call__(self, img: Image.Image, text: str) -> Image.Image:
+    def __call__(
+        self, img: Image.Image, text: str, preprocessor: ImagePreprocessing = None
+    ) -> Image.Image:
         newText = text[:]
 
         if self.uppercase:
@@ -339,15 +359,14 @@ class ImageDither(ArrayDither):
 
         # Set the font now
         try:
-            # Try setting the font for the given fontName
-            self._font = ImageFont.truetype(self.fontName[0], fontPts)
+            self._font = ImageFont.truetype(self.fonts_list[0], fontPts)
 
             # self._font = [ImageFont.truetype(p) for p in self.fontName]
 
         except Exception:
             # Fall back to the default font if the given font was not found
             logging.warning(
-                f'Couldn\'t load "{self.fontName}" from {DEFAULTS["fontsDirectory"]}, falling back to default font'
+                f'Couldn\'t load "{self.fonts_list}" from {DEFAULTS["fontsDirectory"]}, falling back to default font'
             )
 
             try:
@@ -368,6 +387,7 @@ class ImageDither(ArrayDither):
         ratio /= float(img.height / img.width)
         logging.debug(f"Skew transformation calculated ratio: {ratio}")
         # Now resize the image for the pixel ratio
+
         newImg = img.resize(
             (int(img.height * ratio), img.height), resample=PIL.Image.LANCZOS
         )
@@ -396,6 +416,9 @@ class ImageDither(ArrayDither):
 
             self.minPixelRatio = float(self.minPixelHeight / maxPixelHeight)
 
+        if preprocessor is not None:
+            ar = preprocessor(ar)
+
         # Image.fromarray(ar).show()
         d = super().__call__(ar, newText[: int(nH * nW)])
 
@@ -416,7 +439,13 @@ class FileDither(ImageDither):
 
     Handles all IO bound exceptions, logs but also throws them when critical."""
 
-    def __call__(self, inFile: str, outFile: str, text: str):
+    def __call__(
+        self,
+        inFile: str,
+        outFile: str,
+        text: str,
+        preprocessor: ImagePreprocessing = None,
+    ):
 
         try:
             img = Image.open(inFile)
@@ -425,7 +454,7 @@ class FileDither(ImageDither):
             exit(1)
 
         try:
-            d = super().__call__(img, text)
+            d = super().__call__(img, text, preprocessor)
         except Exception as e:
             logging.exception(f"Uncaught exception occurred in ArrayDither: {str(e)}")
             exit(1)
@@ -479,12 +508,29 @@ def main():
         exit(1)
 
     # Now we can dither
-    with open(args.in_text, "r") as f:
+    textfilter_call = (
+        "python ./textfilter.py -in {} -out /tmp/filtered_text.txt -v".format(
+            args.in_text
+        )
+    )
+
+    try:
+        rval = os.system(textfilter_call)
+
+        if rval != 0:
+            logging.error("Error during text filtering occurred: {}".format(rval))
+
+    except Exception as e:
+        logging.error(
+            "Error during calling the text filter occurred: {}".format(str(e))
+        )
+
+    with open("/tmp/filtered_text.txt", "r") as f:
         txt = f.read()  # [:-1]
 
-    logging.info("Filtering text using standardTextFilter")
-    text_multi_filter = textfilter.MultiFilter.standardTextFilter()
-    txt = text_multi_filter(txt)
+    logging.debug(
+        "Read {} characters from filtered file in tmp directory".format(len(txt))
+    )
 
     if args.truncate_text > -1:
         if len(txt) < 64:
@@ -502,6 +548,8 @@ def main():
     for k, v in kwargs.items():
         logging.debug(f'\t"{k}" = {v}')
 
+    preprocessor = ImagePreprocessing()
+
     p = FileDither(**kwargs)
 
     logging.info(
@@ -515,7 +563,7 @@ def main():
     )
 
     try:
-        p(args.input_image, args.out_filepath, txt)
+        p(args.input_image, args.out_filepath, txt, preprocessor)
     except Exception as e:
         logging.exception(f"Uncaught error occurred during dithering: {e}")
         exit(1)
@@ -525,3 +573,20 @@ def main():
 
 if __name__ == "__main__":
     main()
+    quit()
+    fonts = [
+        ImageFont.truetype(
+            "Catamaran-VariableFont_wght.ttf",
+            # "~/Downloads/Roboto_Mono/RobotoMono-VariableFont_wght.ttf",
+            int((72 / 100) * DEFAULTS["supersamplingSize"]),
+        )
+    ]
+    fonts[0].set_variation_by_axes([100])  # This sets weight of variable font
+    text = "the quick brown fox jumps over the lazy dog."
+    holder = AlphabetHolder(text.upper(), fonts=fonts, max_thickness=30)
+
+    for n in range(32):
+        v = int(n * (255 / 31))
+        ar = holder["D"](v)
+        pImg = Image.fromarray(ar)
+        pImg.show()

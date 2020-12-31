@@ -2,13 +2,14 @@ from dataclasses import dataclass
 import os
 import argparse
 import logging
+from math import sqrt
 
 DEFAULTS = {
     "fontName": "Menlo-Bold",
     "fontsDirectory": "",  # Empty since fonts are global on macos
     "pixelRatio": 0.6,
     "pixelHeight": 28,
-    "thicknessRange": (1, 4),
+    "thicknessRange": (1, 8),
     "minPixelHeight": None,
     "paperHeight": 841.0,
     "uppercase": False,
@@ -26,7 +27,8 @@ class _Params:
     paperHeight: float = DEFAULTS["paperHeight"]
     uppercase: bool = DEFAULTS["uppercase"]
     padding: float = DEFAULTS["padding"]
-    fontName: str = DEFAULTS["fontName"]
+    fonts_list: str = DEFAULTS["fontName"]
+    final_aspect_ratio: float = sqrt(2)
 
 
 class Params(_Params):
@@ -42,12 +44,7 @@ class Params(_Params):
 
             for font_path in new_fonts_list:
                 if font_path.endswith(".ttf") or font_path.endswith(".ttc"):
-                    if os.path.isfile(font_path):
-                        fonts_passed.append(font_path)
-                    else:
-                        logging.warning(
-                            f"Font {font_path} was not a file, not adding it to the used fonts list."
-                        )
+                    fonts_passed.append(font_path)
 
                 else:
                     logging.warning(
@@ -69,7 +66,7 @@ class Params(_Params):
         else:
             raise ValueError("Attempt was made to set font to an empty list.")
 
-    fontName = property(fset=__setFontName, fget=__getFontName)
+    fonts_list = property(fset=__setFontName, fget=__getFontName)
 
 
 def make_argument_parser():
@@ -238,6 +235,15 @@ def make_argument_parser():
         default=DEFAULTS["thicknessRange"][1],
     )
 
+    parser.add_argument(
+        "--aspect-ratio",
+        dest="aspect_ratio",
+        metavar="<aspect ratio of final picture>",
+        type=float,
+        help="Aspect ratio of final output image, needed for padding correctly, always needs to be a positive number greatther than or equal to 1. Defaults to sqrt(2) for (DIN AX)",
+        default=sqrt(2),
+    )
+
     return parser
 
 
@@ -291,17 +297,19 @@ def check_arguments(args):
         args.max_thickness > args.min_thickness
     ), "Maximum thickness value must be greater than minimum."
 
+    assert args.aspect_ratio >= 1.0, "Aspect ratio must be strictly positive."
+
 
 def setup_dithering_parameters(parsed_args) -> dict:
     kwargs = {
         "pixelHeight": parsed_args.pixel_height,
         "uppercase": parsed_args.uppercase,
-        "fontName": parsed_args.fontName,
+        "fonts_list": parsed_args.fontName,
         "minPixelRatio": parsed_args.pixel_ratio,
         "minPixelHeight": parsed_args.minPixelHeight,
         "paperHeight": parsed_args.paperHeight,
         "padding": parsed_args.padding / 100.0,  # percentage value given here
         "thicknessRange": (parsed_args.min_thickness, parsed_args.max_thickness),
+        "final_aspect_ratio": parsed_args.aspect_ratio,
     }
     return kwargs
-
