@@ -64,18 +64,13 @@ def gcodes_from_coordinates(coordinates, most_bottom_mm: float) -> str:
 
     full_gcode_str = ""
 
-    # Auto home at first
-    full_gcode_str += "G28 ;\n"
-
-    # And set the feed rate
-    full_gcode_str += "G1 F1000 ;\n"
+    # Dont really auto home since it would touch the plastic
+    full_gcode_str += "G0 X0 Y0 Z5 ;\n"
 
     # Heat the hotend and wait until heated
     full_gcode_str += "M109 S180 \n"
 
-    # TODO: Heat to specified temperature
-
-    z_mm_above = 5.0 + most_bottom_mm
+    z_mm_above = 5.0 + (1.0 - most_bottom_mm)
 
     # Parse the coordinates into a list first
     # And sort them for better efficiency
