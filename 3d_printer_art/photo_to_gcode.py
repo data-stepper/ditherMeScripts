@@ -149,13 +149,13 @@ def main(args):
     assert h == w, "Only square images supported"
 
     # Use about 0.2 yields good quality
-    downsample_factor = 0.4
+    downsample_factor = 0.9
     new_w, new_h = int(w * downsample_factor), int(h * downsample_factor)
     pil_img = pil_img.resize((new_h, new_w), resample=Image.LANCZOS)
 
     dithered = pil_img.convert(mode="1", dither=Image.FLOYDSTEINBERG)
 
-    dithered.save("/home/bent/git/.for_my_xing_xing/dithered.png")
+    dithered.save("/home/bent/git/.for_my_xing_xing/dithered2.png")
 
     ar = np.asarray(dithered, dtype=np.uint8)
 
@@ -163,14 +163,14 @@ def main(args):
     print(ar.shape)
 
     # Now randomly remove some of the dots and plot the image
-    mask = np.random.rand(*ar.shape) > 0.01
+    mask = np.random.rand(*ar.shape) > 0.1
     mask = np.array(mask, dtype="int")
-    ar = np.logical_and(ar, mask)
-    ar = np.array(ar, dtype="uint8")
+    ar = ar * mask * 255
     print(ar.sum())
 
-    sampled = Image.fromarray(ar, mode="1")
+    sampled = Image.fromarray(ar, mode="L")
     sampled.save("/home/bent/xingxing.png")
+    print(sampled)
     print(mask)
     print(ar)
     sys.exit()
