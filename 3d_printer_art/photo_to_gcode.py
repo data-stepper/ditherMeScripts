@@ -10,8 +10,9 @@
 import argparse
 import logging
 from pathlib import Path
-from pprint import pformat
-from PIL import Image
+from pprint import pformat, pprint
+from PIL import Image, ImageOps
+import sys
 import numpy as np
 
 
@@ -37,8 +38,9 @@ def normalized_coordinates_to_visit_from_ar_image(
     # Now transform the coordinates appropriately
     effective_side_length = target_side_length_mm - (2 * border_mm)
     indices *= effective_side_length
+    indices += border_mm
 
-    indices += image_side_length
+    # indices += image_side_length
 
     return indices
 
@@ -70,7 +72,52 @@ def gcodes_from_coordinates(coordinates, most_bottom_mm: float) -> str:
 
     # TODO: Heat to specified temperature
 
-    z_mm_above = 5.0
+    z_mm_above = 5.0 + most_bottom_mm
+
+    # Parse the coordinates into a list first
+    # And sort them for better efficiency
+    coordinates = [(x, y) for (x, y) in coordinates]
+
+    rows = []
+
+    current_row = []
+    last_x = coordinates[0][0]
+
+    while len(coordinates) > 0:
+        x, y = coordinates.pop()
+
+        if last_x == x:
+            current_row.append((x, y))
+
+        else:
+            rows.append(current_row)
+            current_row = []
+
+        last_x = x
+
+    # Now reassemble the original coordinates
+
+    coordinates = []
+    pixels_in_row = []
+
+    for i, row in enumerate(rows):
+        if len(row) == 0:
+            continue
+
+        pixels_in_row.append(len(row))
+
+        if i % 2 == 0:
+            coordinates.extend(row)
+
+        else:
+            coordinates.extend(row[::-1])
+
+    pixels_in_row = np.array(pixels_in_row)
+    logging.info(
+        "Pixel distribution by row total {} rows: \n{}".format(
+            pixels_in_row.shape, pformat(pixels_in_row)
+        )
+    )
 
     for x, y in coordinates:
         full_gcode_str += gcode_carve_one_dot(
@@ -84,30 +131,34 @@ def main(args):
 
     logging.info(pformat(args))
     pil_img = read_image_to_pil(args.image_input)
+    pil_img = ImageOps.invert(pil_img)
     h, w = pil_img.size
 
     assert h == w, "Only square images supported"
 
+    # Use about 0.2 yields good quality
     downsample_factor = 0.2
     new_w, new_h = int(w * downsample_factor), int(h * downsample_factor)
     pil_img = pil_img.resize((new_h, new_w), resample=Image.LANCZOS)
 
     dithered = pil_img.convert(mode="1", dither=Image.FLOYDSTEINBERG)
 
-    # dithered.save("/home/bent/git/.for_my_xing_xing/dithered.png")
+    dithered.save("/home/bent/git/.for_my_xing_xing/dithered.png")
 
     ar = np.array(dithered, dtype=np.uint8)
     coordinates = normalized_coordinates_to_visit_from_ar_image(
         ar,
         image_side_length=new_w,
-        target_side_length_mm=3000.0,
+        target_side_length_mm=300.0,
         border_mm=50.0,
     )
 
     gcodes = gcodes_from_coordinates(
         coordinates, most_bottom_mm=args.mm_depth_into_plastic
     )
-    print(gcodes)
+
+    with open("/home/bent/generated_gcode.gcode", "w") as f:
+        f.write(gcodes)
 
 
 def setup_logging(args):
