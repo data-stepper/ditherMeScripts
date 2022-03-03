@@ -23,9 +23,61 @@ def read_image_to_pil(path):
     return img
 
 
-def dots_to_visit_from_ar_image(ar_image):
-    indices = np.where(ar_image)
-    print(indices)
+def normalized_coordinates_to_visit_from_ar_image(
+    ar_image,
+    image_side_length: int,
+    target_side_length_mm: float,
+    border_mm: float,
+):
+    x, y = np.where(ar_image)
+    indices = np.stack((x, y), axis=-1)
+    indices = np.array(indices, dtype=np.float64)
+    indices /= image_side_length - 1  # Zero indexed always
+
+    # Now transform the coordinates appropriately
+    effective_side_length = target_side_length_mm - (2 * border_mm)
+    indices *= effective_side_length
+
+    indices += image_side_length
+
+    return indices
+
+
+def gcode_carve_one_dot(x, y, z_mm_above, z_mm_bottom):
+    g = ""
+
+    # Move above the dot
+    g += f"G0 X{x:.1f} Y{y:.1f} Z{z_mm_above:.1f} ;\n"
+
+    # Move above to the dot
+    g += f"G0 X{x:.1f} Y{y:.1f} Z{z_mm_bottom:.1f} ;\n"
+
+    # Move back above the dot
+    g += f"G0 X{x:.1f} Y{y:.1f} Z{z_mm_above:.1f} ;\n"
+
+    return g
+
+
+def gcodes_from_coordinates(coordinates, most_bottom_mm: float) -> str:
+
+    full_gcode_str = ""
+
+    # Auto home at first
+    full_gcode_str += "G28 ;\n"
+
+    # And set the feed rate
+    full_gcode_str += "G1 F1000 ;\n"
+
+    # TODO: Heat to specified temperature
+
+    z_mm_above = 5.0
+
+    for x, y in coordinates:
+        full_gcode_str += gcode_carve_one_dot(
+            x, y, z_mm_above, z_mm_bottom=most_bottom_mm
+        )
+
+    return full_gcode_str
 
 
 def main(args):
@@ -38,7 +90,6 @@ def main(args):
 
     downsample_factor = 0.2
     new_w, new_h = int(w * downsample_factor), int(h * downsample_factor)
-    # pil_img = pil_img.resize((new_h, new_w))
     pil_img = pil_img.resize((new_h, new_w), resample=Image.LANCZOS)
 
     dithered = pil_img.convert(mode="1", dither=Image.FLOYDSTEINBERG)
@@ -46,7 +97,17 @@ def main(args):
     # dithered.save("/home/bent/git/.for_my_xing_xing/dithered.png")
 
     ar = np.array(dithered, dtype=np.uint8)
-    dots = dots_to_visit_from_ar_image(ar)
+    coordinates = normalized_coordinates_to_visit_from_ar_image(
+        ar,
+        image_side_length=new_w,
+        target_side_length_mm=3000.0,
+        border_mm=50.0,
+    )
+
+    gcodes = gcodes_from_coordinates(
+        coordinates, most_bottom_mm=args.mm_depth_into_plastic
+    )
+    print(gcodes)
 
 
 def setup_logging(args):
