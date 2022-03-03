@@ -70,6 +70,9 @@ def gcodes_from_coordinates(coordinates, most_bottom_mm: float) -> str:
     # And set the feed rate
     full_gcode_str += "G1 F1000 ;\n"
 
+    # Heat the hotend and wait until heated
+    full_gcode_str += "M109 S180 \n"
+
     # TODO: Heat to specified temperature
 
     z_mm_above = 5.0 + most_bottom_mm
@@ -123,6 +126,10 @@ def gcodes_from_coordinates(coordinates, most_bottom_mm: float) -> str:
         full_gcode_str += gcode_carve_one_dot(
             x, y, z_mm_above, z_mm_bottom=most_bottom_mm
         )
+
+    # Heat the hotend and wait until heated
+    full_gcode_str += "M104 S0 \n"
+    full_gcode_str += "G0 X300 Y300 Z20 ; \n"
 
     return full_gcode_str
 
