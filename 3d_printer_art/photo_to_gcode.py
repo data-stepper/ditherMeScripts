@@ -109,11 +109,14 @@ def gcodes_from_coordinates(coordinates, most_bottom_mm: float) -> str:
 
         pixels_in_row.append(len(row))
 
-        if i % 2 == 0:
+        if i % 2 == 1:
             coordinates.extend(row)
 
         else:
             coordinates.extend(row[::-1])
+
+    # Start at the bottom left
+    coordinates = coordinates[::-1]
 
     pixels_in_row = np.array(pixels_in_row)
     logging.info(
