@@ -49,10 +49,10 @@ def gcode_carve_one_dot(x, y, z_mm_above, z_mm_bottom):
     g = ""
 
     # Move above the dot
-    g += f"G0 X{x:.1f} Y{y:.1f} Z{z_mm_above:.1f} ;\n"
+    g += f"G0 X{x:.1f} Y{y:.1f} Z{z_mm_above:.1f} F3000 ;\n"
 
-    # Move above to the dot
-    g += f"G0 X{x:.1f} Y{y:.1f} Z{z_mm_bottom:.1f} ;\n"
+    # Move to the dot
+    g += f"G0 X{x:.1f} Y{y:.1f} Z{z_mm_bottom:.1f} F500 ;\n"
 
     # Move back above the dot
     g += f"G0 X{x:.1f} Y{y:.1f} Z{z_mm_above:.1f} ;\n"
