@@ -49,10 +49,13 @@ def gcode_carve_one_dot(x, y, z_mm_above, z_mm_bottom):
     g = ""
 
     # Move above the dot
-    g += f"G0 X{x:.1f} Y{y:.1f} Z{z_mm_above:.1f} F3000 ;\n"
+    g += f"G0 X{x:.1f} Y{y:.1f} Z{z_mm_above:.1f} ;\n"
 
     # Move to the dot
-    g += f"G0 X{x:.1f} Y{y:.1f} Z{z_mm_bottom:.1f} F500 ;\n"
+    g += f"G0 X{x:.1f} Y{y:.1f} Z{z_mm_bottom:.1f} ;\n"
+
+    # Wait 1/2 s at the dot to melt it a little
+    g += f"G4 P500 ;\n"
 
     # Move back above the dot
     g += f"G0 X{x:.1f} Y{y:.1f} Z{z_mm_above:.1f} ;\n"
@@ -65,7 +68,11 @@ def gcodes_from_coordinates(coordinates, most_bottom_mm: float) -> str:
     full_gcode_str = ""
 
     # Dont really auto home since it would touch the plastic
+    full_gcode_str += "G28 ;\n"
     full_gcode_str += "G0 X0 Y0 Z5 ;\n"
+
+    # Set the speed to very high
+    full_gcode_str += "G0 F3000 ; \n"
 
     # Heat the hotend and wait until heated
     full_gcode_str += "M109 S180 \n"
@@ -142,7 +149,7 @@ def main(args):
     assert h == w, "Only square images supported"
 
     # Use about 0.2 yields good quality
-    downsample_factor = 0.2
+    downsample_factor = 0.4
     new_w, new_h = int(w * downsample_factor), int(h * downsample_factor)
     pil_img = pil_img.resize((new_h, new_w), resample=Image.LANCZOS)
 
@@ -150,7 +157,26 @@ def main(args):
 
     dithered.save("/home/bent/git/.for_my_xing_xing/dithered.png")
 
-    ar = np.array(dithered, dtype=np.uint8)
+    ar = np.asarray(dithered, dtype=np.uint8)
+
+    print(ar.sum())
+    print(ar.shape)
+
+    # Now randomly remove some of the dots and plot the image
+    mask = np.random.rand(*ar.shape) > 0.01
+    mask = np.array(mask, dtype="int")
+    ar = np.logical_and(ar, mask)
+    ar = np.array(ar, dtype="uint8")
+    print(ar.sum())
+
+    sampled = Image.fromarray(ar, mode="1")
+    sampled.save("/home/bent/xingxing.png")
+    print(mask)
+    print(ar)
+    sys.exit()
+
+    logging.info("Carving total {} dots".format(ar.sum()))
+
     coordinates = normalized_coordinates_to_visit_from_ar_image(
         ar,
         image_side_length=new_w,
@@ -230,7 +256,7 @@ def parse_args():
     parser.add_argument(
         "--mm-depth-into-plastic",
         type=float,
-        default=0.5,
+        default=1.0,
         help="The amount of mm the head will carve the dots into the plastic.",
     )
 
