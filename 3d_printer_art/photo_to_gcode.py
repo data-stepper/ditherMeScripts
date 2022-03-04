@@ -40,6 +40,8 @@ def normalized_coordinates_to_visit_from_ar_image(
     indices *= effective_side_length
     indices += border_mm
 
+    globals()["effective_side_length"] = effective_side_length
+
     # indices += image_side_length
 
     return indices
@@ -77,7 +79,7 @@ def gcodes_from_coordinates(coordinates, most_bottom_mm: float) -> str:
     # Heat the hotend and wait until heated
     full_gcode_str += "M109 S180 \n"
 
-    z_mm_above = 5.0 + (1.0 - most_bottom_mm)
+    z_mm_above = 8.0 + (1.0 - most_bottom_mm)
 
     # Parse the coordinates into a list first
     # And sort them for better efficiency
@@ -127,6 +129,31 @@ def gcodes_from_coordinates(coordinates, most_bottom_mm: float) -> str:
         )
     )
 
+    esl = globals()["effective_side_length"]
+
+    logging.info(
+        "This configuration would give a row height of {} mm".format(
+            esl / pixels_in_row.shape[0]
+        )
+    )
+
+    pixel_density = esl / pixels_in_row
+
+    logging.info(
+        "Each row height pixel density: \n{}".format(pformat(pixel_density))
+    )
+
+    logging.info(
+        "Stats on the pixel density (in mm):\n {} mean {} median {} min {} max"
+        " {} std".format(
+            pixel_density.mean(),
+            np.median(pixel_density),
+            pixel_density.min(),
+            pixel_density.max(),
+            pixel_density.std(),
+        )
+    )
+
     for x, y in coordinates:
         full_gcode_str += gcode_carve_one_dot(
             x, y, z_mm_above, z_mm_bottom=most_bottom_mm
@@ -143,37 +170,22 @@ def main(args):
 
     logging.info(pformat(args))
     pil_img = read_image_to_pil(args.image_input)
-    pil_img = ImageOps.invert(pil_img)
+
+    # Don't invert
+    # pil_img = ImageOps.invert(pil_img)
     h, w = pil_img.size
 
     assert h == w, "Only square images supported"
 
     # Use about 0.2 yields good quality
-    downsample_factor = 0.9
+    downsample_factor = 0.4
     new_w, new_h = int(w * downsample_factor), int(h * downsample_factor)
     pil_img = pil_img.resize((new_h, new_w), resample=Image.LANCZOS)
 
     dithered = pil_img.convert(mode="1", dither=Image.FLOYDSTEINBERG)
-
     dithered.save("/home/bent/git/.for_my_xing_xing/dithered2.png")
 
     ar = np.asarray(dithered, dtype=np.uint8)
-
-    print(ar.sum())
-    print(ar.shape)
-
-    # Now randomly remove some of the dots and plot the image
-    mask = np.random.rand(*ar.shape) > 0.1
-    mask = np.array(mask, dtype="int")
-    ar = ar * mask * 255
-    print(ar.sum())
-
-    sampled = Image.fromarray(ar, mode="L")
-    sampled.save("/home/bent/xingxing.png")
-    print(sampled)
-    print(mask)
-    print(ar)
-    sys.exit()
 
     logging.info("Carving total {} dots".format(ar.sum()))
 
